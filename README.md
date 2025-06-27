@@ -2,20 +2,9 @@
 
 A GUI application to download the latest "Active" HYMO setups for the week off of TrackTitan.io.
 
-## Features
-
-- Modern, easy-to-use graphical interface.
-- Authenticates with your TrackTitan account.
-- Downloads all of the current week's active setups for iRacing.
-- Automatically organizes downloads by car into your selected folder.
-- Live progress bar with a setup counter and percentage.
-- Detailed logging view with color-coded message levels.
-- Ability to gracefully stop the download process.
-- Simple, one-click installers for Windows and Linux/macOS.
-
 ## Installation & Usage
 
-This application is a GUI tool and can be run from source on both Windows and Linux/macOS.
+This application is a GUI tool and can be run from source or as an executible on both Windows and Linux/macOS.
 
 ### Windows
 
