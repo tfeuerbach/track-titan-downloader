@@ -1,0 +1,3 @@
+Please replace this placeholder file with your actual 'icon.ico' file.
+The icon should be in the .ico format for the best results on Windows.
+The build process will automatically bundle this icon into the final executable. 

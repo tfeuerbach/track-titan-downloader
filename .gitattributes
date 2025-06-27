@@ -1,0 +1,40 @@
+# Set the default behavior, in case people don't have core.autocrlf set.
+* text=auto
+
+#
+# The following are explicitly declared text files. These will have their line
+# endings normalized to LF in the repository and converted to the OS-specific
+# line ending upon checkout.
+#
+*.py text
+*.md text
+*.txt text
+*.yml text
+*.css text
+*.js text
+*.html text
+.gitignore text
+.gitattributes text
+env.example text
+
+#
+# The following files are text but should always have LF line endings because
+# they are scripts that will only be run on Unix-like systems.
+#
+*.sh eol=lf
+
+#
+# The following files are text but should always have CRLF line endings because
+# they are scripts that will only be run on Windows.
+#
+*.bat eol=crlf
+
+#
+# The following are binary files. These will not be changed.
+#
+*.ico binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary 
