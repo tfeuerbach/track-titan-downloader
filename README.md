@@ -1,6 +1,6 @@
 # TrackTitan Setup Downloader
 
-A GUI application to download the latest "Active" HYMO setups for the week off of TrackTitan.io.
+A GUI application to download the latest "Active" HYMO setups for the week off of TrackTitan.io all at once. The Track Titan desktop application only downloads setups for a given car as you join a race with one. This is generally a non-issue for 90% of users but I like to get 100% of what I pay for when I'm subscribing to a service. For that reason, I created this so that I didn't need to manually download every setup or join a session for every car in that season/week.
 
 ## Installation & Usage
 
