@@ -23,6 +23,10 @@ debug_*.html
 # User-downloaded setups folder
 downloads/
 
+# OS-specific cache files
+.DS_Store
+Thumbs.db
+
 # PyInstaller build artifacts
 *.manifest
 

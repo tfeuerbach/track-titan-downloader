@@ -9,7 +9,7 @@ import logging
 import threading
 from pathlib import Path
 import tkinter as tk
-from tkinter import ttk, filedialog, scrolledtext
+from tkinter import ttk, filedialog
 from queue import Queue, Empty
 import time
 import webbrowser
@@ -92,6 +92,14 @@ class DownloaderApp(tk.Tk):
         self.download_path_var = tk.StringVar(value=os.getenv('DOWNLOAD_PATH', str(default_path)))
         self.headless_var = tk.BooleanVar(value=True)
         
+        # --- Image Resources ---
+        try:
+            discord_logo_path = resource_path("src/assets/discord_logo.png")
+            self.discord_logo_image = tk.PhotoImage(file=discord_logo_path)
+        except tk.TclError:
+            self.discord_logo_image = None
+            logging.warning("Could not load discord_logo.png. Button will be text-only.")
+
         self.thread = None
         self.auth_session = None
         self.stop_event = threading.Event()
@@ -132,6 +140,7 @@ class DownloaderApp(tk.Tk):
         self.BG_COLOR = "#1c1c1e" 
         self.FRAME_COLOR = "#2c2c2e"
         self.ACCENT_COLOR = "#0A84FF" # A brighter, more electric blue
+        self.DISCORD_COLOR = "#5865F2"
         self.TEXT_COLOR = "#ffffff"
         self.SUBTLE_TEXT_COLOR = "#a1a1a6" # Brighter for better contrast
         self.ERROR_COLOR = "#ff453a"
@@ -158,6 +167,9 @@ class DownloaderApp(tk.Tk):
         style.configure('TButton', background=self.ACCENT_COLOR, foreground=self.TEXT_COLOR, font=(font_family, 11, 'bold'), borderwidth=0, padding=10)
         style.map('TButton', background=[('active', '#007BE0')]) # Darker shade on hover/press
         
+        style.configure('Discord.TButton', background=self.DISCORD_COLOR, foreground=self.TEXT_COLOR, font=(font_family, 11, 'bold'), borderwidth=0, padding=10)
+        style.map('Discord.TButton', background=[('active', '#4752C4')]) # Darker shade on hover/press
+
         style.configure('TCheckbutton', background=self.BG_COLOR, foreground=self.TEXT_COLOR, font=(font_family, 10))
         style.map('TCheckbutton',
             indicatorcolor=[('selected', self.ACCENT_COLOR), ('!selected', self.FRAME_COLOR)],
@@ -251,12 +263,29 @@ class DownloaderApp(tk.Tk):
         ttk.Label(input_frame, text="TrackTitan Password:").grid(row=1, column=0, sticky=tk.W, pady=pad_y)
         self.password_entry = ttk.Entry(input_frame, textvariable=self.password_var, show="*", width=50)
         self.password_entry.grid(row=1, column=1, columnspan=2, sticky=tk.EW, padx=10, pady=pad_y)
+        
+        # --- Separator and Discord Button ---
+        separator_frame = ttk.Frame(input_frame)
+        separator_frame.grid(row=2, column=0, columnspan=3, sticky=tk.EW, pady=10)
+        ttk.Separator(separator_frame).pack(fill=tk.X, expand=True, side=tk.LEFT, padx=10)
+        ttk.Label(separator_frame, text="OR", foreground=self.SUBTLE_TEXT_COLOR).pack(side=tk.LEFT)
+        ttk.Separator(separator_frame).pack(fill=tk.X, expand=True, side=tk.LEFT, padx=10)
 
-        ttk.Label(input_frame, text="Download Folder:").grid(row=2, column=0, sticky=tk.W, pady=pad_y)
+        self.discord_button = ttk.Button(
+            input_frame,
+            text="  Login with Discord",
+            image=self.discord_logo_image,
+            compound=tk.LEFT,
+            style="Discord.TButton",
+            command=self.start_discord_login
+        )
+        self.discord_button.grid(row=3, column=0, columnspan=3, sticky=tk.EW, padx=10, pady=pad_y)
+
+        ttk.Label(input_frame, text="Download Folder:").grid(row=4, column=0, sticky=tk.W, pady=pad_y)
         self.path_entry = ttk.Entry(input_frame, textvariable=self.download_path_var, width=50)
-        self.path_entry.grid(row=2, column=1, sticky=tk.EW, padx=10, pady=pad_y)
+        self.path_entry.grid(row=4, column=1, sticky=tk.EW, padx=10, pady=pad_y)
         self.browse_button = ttk.Button(input_frame, text="Browse...", command=self.browse_folder)
-        self.browse_button.grid(row=2, column=2, sticky=tk.E, padx=(0, 10), pady=pad_y)
+        self.browse_button.grid(row=4, column=2, sticky=tk.E, padx=(0, 10), pady=pad_y)
 
         self.headless_var.set(True)
         self.show_browser_check = ttk.Checkbutton(
@@ -266,7 +295,7 @@ class DownloaderApp(tk.Tk):
             onvalue=False,
             offvalue=True
         )
-        self.show_browser_check.grid(row=3, column=0, columnspan=3, sticky=tk.W, pady=(15, 5))
+        self.show_browser_check.grid(row=5, column=0, columnspan=3, sticky=tk.W, pady=(15, 5))
 
         # --- Control & Progress ---
         control_frame = ttk.Frame(main_frame)
@@ -370,7 +399,6 @@ class DownloaderApp(tk.Tk):
     def configure_logging(self):
         """Redirects Python's logging to the GUI's log view."""
         log_handler = QueueHandler(self.log_queue)
-        # We don't set a formatter, as we'll format it in the GUI
         logging.getLogger().addHandler(log_handler)
         logging.getLogger().setLevel(logging.INFO)
 
@@ -399,7 +427,7 @@ class DownloaderApp(tk.Tk):
             while True:
                 progress_update = self.progress_queue.get_nowait()
 
-                # If we get a max value, we switch from indeterminate to determinate
+                # If max value, switch from indeterminate to determinate
                 if 'max' in progress_update:
                     self.progress_bar.stop()
                     self.progress_bar.config(mode='determinate')
@@ -412,7 +440,7 @@ class DownloaderApp(tk.Tk):
                 if 'value' in progress_update:
                     current_val = progress_update['value']
                     self.progress_var.set(current_val)
-                    # Only update the label if we know the max value
+                    # Only update the label if the max value is known
                     if self.progress_max > 0:
                         percent = (current_val / self.progress_max) * 100
                         if current_val == self.progress_max:
@@ -433,7 +461,7 @@ class DownloaderApp(tk.Tk):
     def set_ui_state(self, is_running):
         """Toggles the state of UI controls based on download status."""
         state = 'disabled' if is_running else 'normal'
-        for widget in (self.email_entry, self.password_entry, self.path_entry, self.browse_button, self.show_browser_check):
+        for widget in (self.email_entry, self.password_entry, self.path_entry, self.browse_button, self.show_browser_check, self.discord_button):
             widget.config(state=state)
         
         self.start_button.config(state=state)
@@ -463,6 +491,13 @@ class DownloaderApp(tk.Tk):
         self.thread = threading.Thread(target=self.run_download_flow, daemon=True)
         self.thread.start()
 
+    def start_discord_login(self):
+        """Starts the user-assisted Discord login flow."""
+        self.set_ui_state(is_running=True)
+        self.stop_event.clear()
+        self.thread = threading.Thread(target=self.run_discord_login_flow, daemon=True)
+        self.thread.start()
+
     def stop_download(self):
         """Sets an event to signal the download thread to terminate."""
         if self.thread and self.thread.is_alive():
@@ -471,6 +506,27 @@ class DownloaderApp(tk.Tk):
             self.stop_button.config(state='disabled') # Prevent multiple clicks
             self.progress_label_var.set("Stopping...")
     
+    def _run_scraper(self, driver, setup_page, download_path):
+        """Initializes and runs the SetupScraper, handling shared logic."""
+        scraper = SetupScraper(
+            session=driver,
+            setup_page=setup_page,
+            delay=1.0,
+            download_path=download_path,
+            progress_queue=self.progress_queue,
+            stop_event=self.stop_event
+        )
+        
+        logging.info("Scraping and downloading setup listings...")
+        setups = scraper.get_setup_listings()
+        
+        if self.stop_event.is_set():
+            logging.warning("Download process stopped by user.")
+        elif not setups:
+            logging.warning("No new active setups found!")
+        else:
+            logging.info(f"Process complete! {len(setups)} setups downloaded successfully.")
+
     def run_download_flow(self):
         """Handles the core download workflow: auth, scraping, and cleanup."""
         try:
@@ -503,25 +559,7 @@ class DownloaderApp(tk.Tk):
                 return
             
             logging.info("Authentication successful!")
-            
-            scraper = SetupScraper(
-                session=driver,
-                setup_page=setup_page,
-                delay=1.0,
-                download_path=download_path,
-                progress_queue=self.progress_queue,
-                stop_event=self.stop_event
-            )
-            
-            logging.info("Scraping and downloading setup listings...")
-            setups = scraper.get_setup_listings()
-            
-            if self.stop_event.is_set():
-                logging.warning("Download process stopped by user.")
-            elif not setups:
-                logging.warning("No new active setups found!")
-            else:
-                logging.info(f"Process complete! {len(setups)} setups downloaded successfully.")
+            self._run_scraper(driver, setup_page, download_path)
         
         except Exception as e:
             logging.error(f"An unexpected error occurred: {e}", exc_info=True)
@@ -529,6 +567,56 @@ class DownloaderApp(tk.Tk):
             if self.auth_session:
                 self.auth_session.close()
             # Defer UI updates to the main thread.
+            self.after(0, self.set_ui_state, False)
+            self.progress_queue.put({'reset': True})
+
+    def run_discord_login_flow(self):
+        """Handles the user-assisted Discord login, then scraping."""
+        try:
+            download_path = self.download_path_var.get()
+            if not download_path:
+                logging.error("Download folder cannot be empty.")
+                return
+
+            setup_page = os.getenv('TRACK_TITAN_SETUP_PAGE', "https://app.tracktitan.io/setups")
+            login_url = os.getenv('TRACK_TITAN_LOGIN_URL', "https://app.tracktitan.io/login")
+
+            create_directories(Path(download_path))
+
+            logging.info("Initializing browser for manual Discord login...")
+            self.auth_session = TrackTitanAuth(
+                email="", password="",
+                login_url=login_url,
+                download_path=download_path
+            )
+
+            driver = self.auth_session.init_browser_for_manual_login()
+            if not driver:
+                logging.error("Failed to open browser for manual login.")
+                return
+            
+            logging.info("Browser opened. Please complete the login process...")
+            
+            is_logged_in = self.auth_session.wait_for_successful_login(success_url_part='/dashboard')
+            
+            if not is_logged_in:
+                logging.error("Login was not completed successfully.")
+                return
+
+            logging.info("Manual login successful! Starting scraper...")
+            # Switch to indeterminate progress bar for scraping phase
+            self.progress_label_var.set("Scanning for setups...")
+            self.progress_var.set(0)
+            self.progress_bar.config(mode='indeterminate')
+            self.progress_bar.start(10)
+            
+            self._run_scraper(driver, setup_page, download_path)
+
+        except Exception as e:
+            logging.error(f"An unexpected error occurred during Discord login flow: {e}", exc_info=True)
+        finally:
+            if self.auth_session:
+                self.auth_session.close()
             self.after(0, self.set_ui_state, False)
             self.progress_queue.put({'reset': True})
 
