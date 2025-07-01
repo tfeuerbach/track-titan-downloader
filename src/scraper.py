@@ -3,11 +3,7 @@ Scrapes and downloads setup files from TrackTitan.
 """
 
 import logging
-import re
-from typing import List, Dict, Optional, Tuple
-from urllib.parse import urljoin
-import requests
-from bs4 import BeautifulSoup
+from typing import List, Optional
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -89,13 +85,23 @@ class SetupScraper:
                     f.write(page_source)
                 return []
 
-            # Scroll to the bottom of the page to ensure all lazy-loaded setups are visible.
-            logger.info("Scrolling to bottom of page...")
+            # Scroll until an '(Inactive)' section header is visible, or we reach the page bottom.
+            logger.info("Scrolling to load all setups...")
             last_height = self.session.execute_script("return document.body.scrollHeight")
             
             while True:
                 self.session.execute_script("window.scrollTo(0, document.body.scrollHeight);")
                 time.sleep(self.delay + 1)
+                
+                # Optimization: Stop scrolling if an inactive section header is visible.
+                try:
+                    # This XPath finds a div with the header classes that contains the text '(Inactive)'
+                    if self.session.find_elements(By.XPATH, "//div[contains(@class, 'text-2xl') and contains(., '(Inactive)')]"):
+                        logger.info("First inactive section header is visible. Stopping scroll.")
+                        break
+                except Exception:
+                    # Not critical, ignore errors.
+                    pass
                 
                 new_height = self.session.execute_script("return document.body.scrollHeight")
                 if new_height == last_height:
@@ -104,34 +110,41 @@ class SetupScraper:
             
             logger.info("Finished scrolling.")
 
+            # Find all 'Active' sections and collect setup links from each.
+            setup_page_urls = []
             try:
-                # After scrolling, find the fully loaded active container.
-                active_span = wait.until(EC.visibility_of_element_located(
-                    (By.CSS_SELECTOR, "span.text-green-500")
-                ))
+                active_spans = self.session.find_elements(By.CSS_SELECTOR, "span.text-green-500")
+                if not active_spans:
+                     logger.warning("No '(Active)' sections found on the page.")
+                     return []
+                
+                logger.info(f"Found {len(active_spans)} '(Active)' sections. Collecting links from each.")
 
-                # Navigate from the '(Active)' span to the div containing the setup cards.
-                header_div = active_span.find_element(By.XPATH, "./parent::div")
-                active_container = header_div.find_element(By.XPATH, "./following-sibling::div")
+                for active_span in active_spans:
+                    # Navigate from the '(Active)' span to the div containing the setup cards.
+                    header_div = active_span.find_element(By.XPATH, "./parent::div")
+                    active_container = header_div.find_element(By.XPATH, "./following-sibling::div")
+                    
+                    # Find setup links only within that active container.
+                    setup_links = active_container.find_elements(By.TAG_NAME, 'a')
+                    
+                    for link in setup_links:
+                        url = link.get_attribute('href')
+                        if url:
+                            setup_page_urls.append(url)
 
             except Exception as e:
                 page_source = self.session.page_source
                 with open('debug_selenium_page.html', 'w', encoding='utf-8') as f:
                     f.write(page_source)
-                logger.error(f"Could not find the '(Active)' setups section after scrolling. Error: {e}. Saved page HTML for debugging.")
+                logger.error(f"Could not find or process the '(Active)' setups sections after scrolling. Error: {e}. Saved page HTML for debugging.")
                 return []
             
-            # Find setup links only within that active container.
-            setup_links = active_container.find_elements(By.TAG_NAME, 'a')
-        
-            if not setup_links:
-                logger.warning("No setup links found within the 'Active' section.")
+            if not setup_page_urls:
+                logger.warning("No setup links found within any 'Active' sections.")
                 return []
         
-            logger.info(f"Found {len(setup_links)} setup links in the 'Active' section.")
-        
-            # Get all hrefs first to prevent the page from going stale during iteration.
-            setup_page_urls = [link.get_attribute('href') for link in setup_links]
+            logger.info(f"Found a total of {len(setup_page_urls)} setup links across all 'Active' sections.")
             
             setups = []
             total_setups = len(setup_page_urls)
@@ -158,7 +171,7 @@ class SetupScraper:
 
         except Exception as e:
             logger.error(f"Selenium scraping failed: {e}", exc_info=True)
-            # Save page source on other exceptions too
+            # Save page source on other exceptions
             try:
                 page_source = self.session.page_source
                 with open('debug_selenium_page_error.html', 'w', encoding='utf-8') as f:
@@ -172,43 +185,9 @@ class SetupScraper:
         """
         Handles the download and file organization for a single setup.
         """
-        try:
-            # Parse Car/Track from URL to determine destination folder
-            parts = setup_page_url.strip('/').split('/')
-            name_part = parts[-2]
-            
-            car_track_parts = name_part.split('-')
-            track_keywords = ['brands', 'hatch', 'silverstone', 'zolder', 'watkins', 'glen']
-            split_index = -1
-            for i, part in enumerate(car_track_parts):
-                if part in track_keywords:
-                    split_index = i
-                    break
-            
-            if split_index != -1:
-                car = " ".join(car_track_parts[:split_index]).title()
-                track = " ".join(car_track_parts[split_index:]).title().replace("E Sports", "E-Sports")
-            else: # Fallback
-                car = " ".join(car_track_parts[:-2]).title()
-                track = " ".join(car_track_parts[-2:]).title().replace("E Sports", "E-Sports")
-
-            name = f"{car} - {track}"
-            
-            # Sanitize car name for folder path, removing series suffixes.
-            base_car_name = car.lower().replace(' ', '').replace('.', '')
-
-            suffixes_to_remove = ['imsa', 'gts', 'ftsc', 'tcr']
-            
-            # Regex to remove any of these suffixes from the end of the string.
-            pattern = f"({'|'.join(suffixes_to_remove)})*$"
-            iracing_car_name = re.sub(pattern, '', base_car_name)
-
-        except Exception as e:
-            logger.warning(f"Could not parse car/track from URL {setup_page_url}: {e}")
-            return None
+        download_dir = Path(self.download_path)
 
         # Trigger the download
-        download_dir = Path(self.download_path)
         files_before = set(download_dir.glob('*.zip'))
 
         try:
@@ -227,75 +206,105 @@ class SetupScraper:
                 ))
                 self.session.execute_script("arguments[0].click();", manual_download_button)
             except (NoSuchElementException, TimeoutException):
-                logger.warning("Did not find the 'Download Manually' button. Assuming direct download.")
+                logger.debug("Did not find 'Download Manually' button, assuming direct download.")
                 pass
 
         except Exception as e:
-            logger.error(f"Could not trigger download for {name} at {setup_page_url}: {e}")
+            logger.error(f"Could not trigger download for setup at {setup_page_url}: {e}")
             return None
 
         # Wait for the new file to appear in the downloads folder.
         latest_zip_file = None
         try:
-            end_time = time.time() + 60  # Wait up to 60 seconds
+            end_time = time.time() + 60  # Wait 60 seconds
             new_file_appeared = False
             while time.time() < end_time:
                 files_after = set(download_dir.glob('*.zip'))
-                if files_after - files_before:
+                new_files = files_after - files_before
+                if new_files:
+                    # Handle cases where multiple zips appear
+                    latest_zip_file = max(new_files, key=lambda f: f.stat().st_mtime)
                     new_file_appeared = True
                     break
                 time.sleep(0.5)
 
             if not new_file_appeared:
-                raise TimeoutException(f"Download did not appear in '{download_dir}' after 60s for {name}")
+                raise TimeoutException(f"Download did not appear in '{download_dir}' after 60s for setup from {setup_page_url}")
 
-            # Wait for file to be fully written to disk.
+            # Wait for file to be written to disk.
             time.sleep(2)
-
-            # Identify the newest file in the directory.
-            files_after = download_dir.glob('*.zip')
-            new_files = [f for f in files_after if f not in files_before]
-            if not new_files:
-                raise FileNotFoundError(f"Could not identify the new downloaded file for {name}.")
-
-            latest_zip_file = max(new_files, key=lambda f: f.stat().st_mtime)
-            logger.info(f"Identified new download: {latest_zip_file.name} for setup {name}")
+            logger.info(f"Identified new download: {latest_zip_file.name}")
 
         except (TimeoutException, FileNotFoundError) as e:
-            logger.error(f"Error while waiting for download of {name}: {e}")
+            logger.error(f"Error while waiting for download: {e}")
             return None
             
-        # Unzip and organize the setup files.
+        # Unzip and organize the file based on its internal structure.
         try:
-            car_dir = download_dir / sanitize_filename(iracing_car_name)
-            car_dir.mkdir(parents=True, exist_ok=True)
-
             with tempfile.TemporaryDirectory() as temp_dir:
                 temp_path = Path(temp_dir)
                 with zipfile.ZipFile(latest_zip_file, 'r') as zip_ref:
                     zip_ref.extractall(temp_path)
                 
-                extracted_items = list(temp_path.iterdir())
-                source_dir_to_move = temp_path
-                if len(extracted_items) == 1 and extracted_items[0].is_dir():
-                    source_dir_to_move = extracted_items[0]
+                # Find any .sto file to determine the directory structure.
+                sto_files = list(temp_path.rglob('*.sto'))
+                if not sto_files:
+                     raise Exception(f"No .sto setup files found in the zip: {latest_zip_file.name}")
 
-                for item in source_dir_to_move.iterdir():
-                    dest_path = car_dir / item.name
-                    if dest_path.exists():
-                        if dest_path.is_dir():
-                            shutil.rmtree(dest_path)
-                        else:
-                            dest_path.unlink()
-                    shutil.move(str(item), str(car_dir))
+                # The path inside the zip is expected to be 'car-name/track-name/setup.sto'
+                first_sto_file = sto_files[0]
+                relative_sto_path = first_sto_file.relative_to(temp_path)
+                
+                if len(relative_sto_path.parts) < 3:
+                    # Sometimes the zip might have an extra top-level folder
+                    # 'setups/car-name/track-name/setup.sto'
+                    # Find the car/track folders by searching for a directory that contains a directory.
+                    
+                    potential_car_dirs = [d for d in temp_path.rglob('*') if d.is_dir() and any(sd.is_dir() for sd in d.iterdir())]
+                    if not potential_car_dirs:
+                        raise Exception(f"Could not determine car/track folder structure in {latest_zip_file.name}")
+
+                    base_dir = potential_car_dirs[0]
+                    relative_sto_path = first_sto_file.relative_to(base_dir)
+
+                car_name_raw = relative_sto_path.parts[0]
+                track_name_raw = relative_sto_path.parts[1]
+                
+                # The source directory for all setup files is temp_path/car/track
+                setup_source_dir = temp_path / relative_sto_path.parent
+
+                # Grab a setup name from one of the .sto files (e.g., the race setup)
+                race_setup = next((s for s in sto_files if '_sR' in s.name), sto_files[0])
+                setup_package_name = race_setup.stem
+
+                # Sanitize names for folder paths.
+                sanitized_car = sanitize_filename(car_name_raw)
+                sanitized_track = sanitize_filename(track_name_raw)
+                sanitized_package = sanitize_filename(setup_package_name)
+
+                # Construct the final destination directory: download_dir/car/track/package/
+                final_dir = download_dir / sanitized_car / sanitized_track / sanitized_package
+
+                if final_dir.exists():
+                    shutil.rmtree(final_dir)
+                final_dir.mkdir(parents=True)
+
+                # Move all contents from the unzipped source directory.
+                for item in setup_source_dir.iterdir():
+                    shutil.move(str(item), str(final_dir))
             
-            logger.info(f"Unzipped and organized setup for '{name}' into '{car_dir.name}'")
-            latest_zip_file.unlink() # Clean up zip
+            car_name_display = car_name_raw.replace('-', ' ').title()
+            track_name_display = track_name_raw.replace('-', ' ').title()
+            name = f"{car_name_display} - {track_name_display}"
 
-            return SetupInfo(name=name, track=track, car=car, download_url=setup_page_url)
+            logger.info(f"Unzipped and organized '{name}' into '{final_dir.relative_to(download_dir)}'")
+            latest_zip_file.unlink() # Clean up
+
+            return SetupInfo(name=name, track=track_name_display, car=car_name_display, download_url=setup_page_url)
 
         except Exception as e:
-            logger.error(f"Error organizing file for {name}: {e}", exc_info=True)
+            logger.error(f"Error organizing file for setup from {setup_page_url}: {e}", exc_info=True)
             if latest_zip_file and latest_zip_file.exists():
-                latest_zip_file.unlink() # Attempt to clean up failed download
+                # Don't delete the zip on failure to organize, user might want it.
+                logger.warning(f"Failed to organize {latest_zip_file.name}. The zip file has been kept.")
             return None

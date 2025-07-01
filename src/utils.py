@@ -2,8 +2,6 @@
 General utility functions.
 """
 
-import logging
-import time
 from pathlib import Path
 import re
 

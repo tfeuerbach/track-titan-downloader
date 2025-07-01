@@ -1,6 +1,6 @@
 # TrackTitan Setup Downloader
 
-A GUI application to download the latest "Active" HYMO setups for the week off of TrackTitan.io.
+A GUI application to download the latest "Active" HYMO setups for the week off of TrackTitan.io all at once. The Track Titan desktop application only downloads setups for a given car as you join a race with one. This is generally a non-issue for 90% of users but I like to get 100% of what I pay for when I'm subscribing to a service. For that reason, I created this so that I didn't need to manually download every setup or join a session for every car in that season/week.
 
 ## Installation & Usage
 
@@ -28,16 +28,14 @@ This will install dependencies and create your `.env` configuration file.
 
 ## File Organization
 
-Downloads are organized into your chosen folder by car name. For example, if you choose `Documents/iRacing/setups` as your download folder, setups will be placed like this:
+Downloads are organized into your chosen folder by car, then track, and finally by the setup package name. For example, if you choose `Documents/iRacing/setups` as your download folder, setups will be placed like this:
 ```
 Documents/iRacing/setups/
-├── ferrari296gt3/
-│   ├── setup_file_1.sto
-│   └── setup_file_2.sto
-├── porsche992gt3r/
-│   ├── setup_file_3.sto
-│   └── setup_file_4.sto
-└── mercedesamggt3evo/
+└── ferrari296gt3/
+    └── daytonaroad/
+        └── HYMO_IMSA_25S3_F296_Daytona_Road/
+            ├── setup_file_1.sto
+            └── setup_file_2.rpy
 ```
 
 ## Notes
