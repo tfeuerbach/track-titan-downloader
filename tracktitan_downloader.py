@@ -115,6 +115,11 @@ class DownloaderApp(tk.Tk):
         self.log_queue = Queue()
         self.progress_queue = Queue()
         
+        # Track resize state to avoid heavy UI updates while the user drags the sash
+        self._is_resizing = False
+        # Accumulate log records so we can insert them in batches for better performance
+        self._pending_log_records = []
+        
         # --- UI Styling ---
         self.apply_styles()
 
@@ -160,6 +165,11 @@ class DownloaderApp(tk.Tk):
         style.configure('TLabelframe', background=self.BG_COLOR, borderwidth=0)
         style.configure('TLabelframe.Label', background=self.BG_COLOR, foreground=self.SUBTLE_TEXT_COLOR, font=(font_family, 12, 'italic'))
         style.configure('TLabel', background=self.BG_COLOR, foreground=self.TEXT_COLOR, font=(font_family, 10))
+        
+        # Add style for the PanedWindow sash
+        style.configure('TPanedwindow', background=self.BG_COLOR)
+        style.configure('TPanedwindow.Sash', sashthickness=6, background=self.FRAME_COLOR, borderwidth=0)
+        style.map('TPanedwindow.Sash', background=[('active', self.ACCENT_COLOR)])
         
         style.configure('TEntry', fieldbackground=self.FRAME_COLOR, foreground=self.TEXT_COLOR, borderwidth=0, insertcolor=self.TEXT_COLOR)
         style.map('TEntry', fieldbackground=[('focus', '#3a3a3c')]) # Highlight on focus
@@ -249,9 +259,27 @@ class DownloaderApp(tk.Tk):
         """Initializes and places all widgets for the main downloader UI."""
         main_frame = ttk.Frame(parent, padding=(25, 25, 25, 5))
         main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Create a PanedWindow to allow resizing of the log section
+        paned_window = ttk.PanedWindow(main_frame, orient=tk.VERTICAL)
+        paned_window.pack(fill=tk.BOTH, expand=True)
+
+        # Attempt to style the sash; fall back silently if the option isn't available (ttk.PanedWindow may not support it on all Tcl/Tk versions)
+        try:
+            paned_window.configure(sashrelief=tk.RAISED)
+        except tk.TclError:
+            pass  # Ignore if the underlying Tk implementation does not recognise this option
+
+        # Detect when the user starts or stops dragging the sash so we can pause heavy UI updates
+        paned_window.bind("<ButtonPress-1>", lambda e: setattr(self, "_is_resizing", True))
+        paned_window.bind("<ButtonRelease-1>", lambda e: setattr(self, "_is_resizing", False))
+
+        # A frame to hold the non-resizable top section
+        top_section_frame = ttk.Frame(paned_window)
+        paned_window.add(top_section_frame, weight=0)
         
         # --- Input Fields ---
-        input_frame = ttk.LabelFrame(main_frame, text="CONFIGURATION", padding="20")
+        input_frame = ttk.LabelFrame(top_section_frame, text="CONFIGURATION", padding="20")
         input_frame.pack(fill=tk.X, expand=False, pady=(0, 25))
         input_frame.columnconfigure(1, weight=1)
 
@@ -298,7 +326,7 @@ class DownloaderApp(tk.Tk):
         self.show_browser_check.grid(row=5, column=0, columnspan=3, sticky=tk.W, pady=(15, 5))
 
         # --- Control & Progress ---
-        control_frame = ttk.Frame(main_frame)
+        control_frame = ttk.Frame(top_section_frame)
         control_frame.pack(fill=tk.X, expand=False, pady=(0, 20))
         control_frame.columnconfigure(2, weight=1) # Make progress bar expand
 
@@ -321,8 +349,10 @@ class DownloaderApp(tk.Tk):
         self.progress_label.grid_remove()
 
         # --- Log Viewer ---
-        log_frame = ttk.LabelFrame(main_frame, text="LOG", padding="20")
-        log_frame.pack(fill=tk.BOTH, expand=True)
+        log_frame = ttk.LabelFrame(paned_window, text="LOG", padding="20")
+        paned_window.add(log_frame, weight=1) # Add to paned window as the bottom, resizable pane
+        log_frame.rowconfigure(0, weight=1)
+        log_frame.columnconfigure(0, weight=1)
 
         self.log_tree = ttk.Treeview(log_frame, columns=('Time', 'Level', 'Message'), show='headings')
         self.log_tree.heading('Time', text='Time')
@@ -333,10 +363,10 @@ class DownloaderApp(tk.Tk):
         self.log_tree.column('Message', width=550)
         
         vsb = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_tree.yview)
-        vsb.pack(side='right', fill='y')
+        vsb.grid(row=0, column=1, sticky='ns')
         self.log_tree.configure(yscrollcommand=vsb.set)
         
-        self.log_tree.pack(fill=tk.BOTH, expand=True)
+        self.log_tree.grid(row=0, column=0, sticky='nsew')
 
         # Tags for coloring
         self.log_tree.tag_configure('INFO', foreground=self.TEXT_COLOR)
@@ -404,9 +434,17 @@ class DownloaderApp(tk.Tk):
 
     def process_log_queue(self):
         """Polls the log queue and displays new records in the log view."""
+        # Drain the queue first
         try:
             while True:
                 record = self.log_queue.get_nowait()
+                self._pending_log_records.append(record)
+        except Empty:
+            pass  # Nothing left
+
+        # Insert batched records only if we are not currently dragging the sash
+        if not self._is_resizing and self._pending_log_records:
+            for record in self._pending_log_records:
                 log_time = time.strftime('%H:%M:%S', time.localtime(record.created))
                 level = record.levelname
                 msg = record.getMessage()
@@ -416,11 +454,13 @@ class DownloaderApp(tk.Tk):
                     tag = "SUCCESS"
 
                 self.log_tree.insert('', tk.END, values=(f'  {log_time}', f'  {level}', f'  {msg}'), tags=(tag,))
-                self.log_tree.yview_moveto(1.0)
-        except Empty:
-            pass # The queue is empty
-        self.after(100, self.process_log_queue)
-        
+            # Auto-scroll once per batch instead of per line
+            self.log_tree.yview_moveto(1.0)
+            self._pending_log_records.clear()
+
+        # Re-schedule after a short delay to keep UI responsive without hogging the event loop
+        self.after(150, self.process_log_queue)
+
     def process_progress_queue(self):
         """Polls the progress queue to update the progress bar."""
         try:
@@ -433,7 +473,7 @@ class DownloaderApp(tk.Tk):
                     self.progress_bar.config(mode='determinate')
                     new_max = progress_update['max']
                     self.progress_max = new_max
-                    self.progress_bar.config(maximum=new_max if new_max > 0 else 1) # Dummy max
+                    self.progress_bar.config(maximum=new_max if new_max > 0 else 1)  # Dummy max
                     if new_max == 0:
                         self.progress_label_var.set("No new setups found.")
 
@@ -444,19 +484,21 @@ class DownloaderApp(tk.Tk):
                     if self.progress_max > 0:
                         percent = (current_val / self.progress_max) * 100
                         if current_val == self.progress_max:
-                             self.progress_label_var.set(f"Finalizing...")
+                            self.progress_label_var.set("Finalizing...")
                         else:
                             self.progress_label_var.set(f"{current_val}/{self.progress_max} ({percent:.0f}%)")
                 
                 if progress_update.get('reset'):
                     self.progress_var.set(0)
                     self.progress_label_var.set("")
-                    self.progress_max = 0 # Reset max
+                    self.progress_max = 0  # Reset max
                     self.progress_bar.stop()
                     self.progress_bar.config(mode='determinate')
         except Empty:
             pass
-        self.after(100, self.process_progress_queue)
+
+        # Re-schedule after a short delay to keep UI responsive without hogging the event loop
+        self.after(150, self.process_progress_queue)
 
     def set_ui_state(self, is_running):
         """Toggles the state of UI controls based on download status."""

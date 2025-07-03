@@ -89,20 +89,51 @@ class SetupScraper:
             logger.info("Scrolling to load all setups...")
             last_height = self.session.execute_script("return document.body.scrollHeight")
             
+            # Track inactive section headers
+            first_inactive_seen = False
+            inactive_header_xpath = "//div[contains(@class, 'text-2xl') and contains(., '(Inactive)')]"
+            prev_inactive_count = 0
+            # Stop after this many extra inactive sections appear.
+            extra_inactive_sections_needed = 2
+
             while True:
                 self.session.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                time.sleep(self.delay + 1)
+                time.sleep(self.delay + 2)
                 
-                # Optimization: Stop scrolling if an inactive section header is visible.
-                try:
-                    # This XPath finds a div with the header classes that contains the text '(Inactive)'
-                    if self.session.find_elements(By.XPATH, "//div[contains(@class, 'text-2xl') and contains(., '(Inactive)')]"):
-                        logger.info("First inactive section header is visible. Stopping scroll.")
+                # Current inactive headers on the page
+                inactive_headers = self.session.find_elements(By.XPATH, inactive_header_xpath)
+
+                # First inactive header
+                if inactive_headers and not first_inactive_seen:
+                    first_inactive_seen = True
+                    prev_inactive_count = len(inactive_headers)
+
+                    # Give the UI a moment to finish rendering any late active setups.
+                    logger.info("First inactive section header is visible. Waiting a short grace period to allow any remaining active setups to render …")
+                    time.sleep(self.delay + 1)  # Give the frontend JS a second to finish rendering
+
+                    # After the wait, decide whether to keep scrolling.
+                    new_height_after_wait = self.session.execute_script("return document.body.scrollHeight")
+                    if new_height_after_wait <= last_height:
+                        logger.info("No additional content detected after grace period. Stopping scroll.")
                         break
-                except Exception:
-                    # Not critical, ignore errors.
-                    pass
+                    else:
+                        logger.info("Additional content detected after grace period. Continuing scroll.")
+                        last_height = new_height_after_wait
+                        continue
+
+                # Additional inactive headers
+                if first_inactive_seen and inactive_headers:
+                    current_inactive_count = len(inactive_headers)
+                    if current_inactive_count - prev_inactive_count >= extra_inactive_sections_needed:
+                        logger.info(f"{extra_inactive_sections_needed} additional '(Inactive)' sections detected while scrolling. Stopping scroll.")
+                        break
+                    # Keep original count to detect cumulative extras.
+
+                # If no inactive headers yet or we decided to continue, fall through to the height check below.
                 
+                # Fall through to normal height check if we haven't stopped yet.
+
                 new_height = self.session.execute_script("return document.body.scrollHeight")
                 if new_height == last_height:
                     break
