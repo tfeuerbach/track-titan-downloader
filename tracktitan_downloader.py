@@ -60,7 +60,7 @@ class DownloaderApp(tk.Tk):
         self.withdraw()
         
         self.APP_VERSION = APP_VERSION
-        self.title(f"TrackTitan Setup Downloader - {self.APP_VERSION}")
+        self.title(f"Track Titan Setup Downloader - {self.APP_VERSION}")
         self.geometry("800x850")
 
         # Set application icon for window and Windows taskbar
@@ -288,11 +288,11 @@ class DownloaderApp(tk.Tk):
         input_frame.columnconfigure(1, weight=1)
 
         pad_y = 8
-        ttk.Label(input_frame, text="TrackTitan Email:").grid(row=0, column=0, sticky=tk.W, pady=pad_y)
+        ttk.Label(input_frame, text="Track Titan Email:").grid(row=0, column=0, sticky=tk.W, pady=pad_y)
         self.email_entry = ttk.Entry(input_frame, textvariable=self.email_var, width=50)
         self.email_entry.grid(row=0, column=1, columnspan=2, sticky=tk.EW, padx=10, pady=pad_y)
 
-        ttk.Label(input_frame, text="TrackTitan Password:").grid(row=1, column=0, sticky=tk.W, pady=pad_y)
+        ttk.Label(input_frame, text="Track Titan Password:").grid(row=1, column=0, sticky=tk.W, pady=pad_y)
         self.password_entry = ttk.Entry(input_frame, textvariable=self.password_var, show="*", width=50)
         self.password_entry.grid(row=1, column=1, columnspan=2, sticky=tk.EW, padx=10, pady=pad_y)
         
@@ -390,7 +390,7 @@ class DownloaderApp(tk.Tk):
         center_frame = ttk.Frame(about_frame)
         center_frame.pack(expand=True)
 
-        header = ttk.Label(center_frame, text="TrackTitan Downloader", style="About.Header.TLabel")
+        header = ttk.Label(center_frame, text="Track Titan Downloader", style="About.Header.TLabel")
         header.pack(pady=(0, 5))
         
         version_label = ttk.Label(center_frame, text=f"Version {self.APP_VERSION}", foreground=self.SUBTLE_TEXT_COLOR, style="About.TLabel")
@@ -402,7 +402,7 @@ class DownloaderApp(tk.Tk):
 
         disclaimer_text = (
             "This tool is for personal, non-commercial use, intended as a means to download all setups in bulk. "
-            "In accordance with the TrackTitan Terms and Conditions, you are prohibited from sharing or "
+            "In accordance with the Track Titan Terms and Conditions, you are prohibited from sharing or "
             "distributing any downloaded setups.\n\n"
         )
         disclaimer_label = ttk.Label(disclaimer_frame, text=disclaimer_text, wraplength=450, justify=tk.CENTER, style="Disclaimer.TLabel")
@@ -645,7 +645,7 @@ class DownloaderApp(tk.Tk):
 
             create_directories(Path(download_path))
 
-            logging.info("Starting TrackTitan setup downloader...")
+            logging.info("Starting Track Titan setup downloader...")
             self.auth_session = TrackTitanAuth(
                 email=email,
                 password=password,
