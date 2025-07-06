@@ -57,11 +57,11 @@ class DownloaderApp(tk.Tk):
     
     def __init__(self):
         super().__init__()
-        self.withdraw() # Hide window to prevent pop-in effect
+        self.withdraw()
         
         self.APP_VERSION = APP_VERSION
         self.title(f"TrackTitan Setup Downloader - {self.APP_VERSION}")
-        self.geometry("800x750") # Increased height for footer
+        self.geometry("800x850")
 
         # Set application icon for window and Windows taskbar
         if sys.platform.startswith('win'):
@@ -360,13 +360,16 @@ class DownloaderApp(tk.Tk):
         self.log_tree.heading('Message', text='Message')
         self.log_tree.column('Time', width=120, stretch=tk.NO, anchor='w')
         self.log_tree.column('Level', width=100, stretch=tk.NO, anchor='w')
-        self.log_tree.column('Message', width=550)
+        self.log_tree.column('Message', width=400)
         
         vsb = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_tree.yview)
         vsb.grid(row=0, column=1, sticky='ns')
         self.log_tree.configure(yscrollcommand=vsb.set)
         
         self.log_tree.grid(row=0, column=0, sticky='nsew')
+
+        # Adjust the 'Message' column width when the widget is resized.
+        self.log_tree.bind('<Configure>', self._adjust_log_columns)
 
         # Tags for coloring
         self.log_tree.tag_configure('INFO', foreground=self.TEXT_COLOR)
@@ -700,6 +703,30 @@ class DownloaderApp(tk.Tk):
                 self.auth_session.close()
             self.after(0, self.set_ui_state, False)
             self.progress_queue.put({'reset': True})
+
+    def _adjust_log_columns(self, event=None):
+        """Adjusts the 'Message' column width to fill available space."""
+        # Guard against firing during initial widget creation before it has a size.
+        if self.log_tree.winfo_width() <= 1:
+            return
+
+        total_width = self.log_tree.winfo_width()
+        
+        # Get the width of the other columns.
+        time_width = self.log_tree.column('Time', 'width')
+        level_width = self.log_tree.column('Level', 'width')
+        
+        # Buffer for scrollbar and internal padding.
+        scrollbar_buffer = 25
+        
+        # Calculate the remaining space for the 'Message' column.
+        new_message_width = total_width - time_width - level_width - scrollbar_buffer
+        
+        min_width = 200
+        if new_message_width < min_width:
+            new_message_width = min_width
+            
+        self.log_tree.column('Message', width=new_message_width)
 
 
 if __name__ == '__main__':
