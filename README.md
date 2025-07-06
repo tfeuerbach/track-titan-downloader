@@ -4,6 +4,18 @@ A GUI application to download the latest "Active" HYMO setups for the week off o
 
 TrackTitan doesn't provide any sort of API so this tool leverages Selenium to mock user interaction with a headless browser. An option to view the browser and what its doing is present.
 
+## Disclaimer
+
+**This tool is for personal, non-commercial use only.**
+
+In accordance with the [TrackTitan Terms and Conditions](https://www.tracktitan.io/terms-and-conditions), you are explicitly prohibited from sharing, distributing, or using for commercial purposes any car setups downloaded from their service. This tool is intended solely for downloading all the setups up front/in bulk for a week.
+
+
+## Features
+
+- Simple GUI for easy operation.
+- Login with your TrackTitan credentials or via Discord.
+
 ## Installation & Usage
 
 This application is a GUI tool and can be run from source or as an executible on both Windows and Linux/macOS.

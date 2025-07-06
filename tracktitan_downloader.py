@@ -230,6 +230,10 @@ class DownloaderApp(tk.Tk):
         # About page styles
         style.configure("About.Header.TLabel", font=(font_family, 18, 'bold'), background=self.BG_COLOR)
         style.configure("About.TLabel", font=(font_family, 11), background=self.BG_COLOR)
+        style.configure("Disclaimer.TLabel",
+            font=(font_family, 10, 'italic'),
+            foreground=self.SUBTLE_TEXT_COLOR,
+            background=self.BG_COLOR)
 
     def create_master_layout(self):
         """Creates the main window structure, including pages and the footer."""
@@ -392,6 +396,18 @@ class DownloaderApp(tk.Tk):
         version_label = ttk.Label(center_frame, text=f"Version {self.APP_VERSION}", foreground=self.SUBTLE_TEXT_COLOR, style="About.TLabel")
         version_label.pack(pady=(0, 25))
 
+        # Disclaimer
+        disclaimer_frame = ttk.Frame(center_frame)
+        disclaimer_frame.pack(fill=tk.X, expand=True, pady=(10, 20))
+
+        disclaimer_text = (
+            "This tool is for personal, non-commercial use, intended as a means to download all setups in bulk. "
+            "In accordance with the TrackTitan Terms and Conditions, you are prohibited from sharing or "
+            "distributing any downloaded setups.\n\n"
+        )
+        disclaimer_label = ttk.Label(disclaimer_frame, text=disclaimer_text, wraplength=450, justify=tk.CENTER, style="Disclaimer.TLabel")
+        disclaimer_label.pack(fill=tk.X)
+
         # Credits
         ttk.Label(center_frame, text="Created by Thomas Feuerbach", style="About.TLabel").pack(pady=(10, 2))
 
@@ -408,9 +424,11 @@ class DownloaderApp(tk.Tk):
     def show_page(self, page_to_show):
         """Raises the specified frame and manages footer button visibility."""
         if page_to_show == self.about_page:
-            self.about_button.config(state='disabled')
+            self.about_button.pack_forget()
         else:
-            self.about_button.config(state='normal')
+            # Ensure the button is not already visible to avoid re-packing it.
+            if not self.about_button.winfo_ismapped():
+                self.about_button.pack(side=tk.LEFT, padx=20)
         page_to_show.tkraise()
 
     def create_hyperlink(self, parent, text, url):
