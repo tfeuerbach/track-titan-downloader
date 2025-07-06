@@ -22,7 +22,6 @@ try:
 except ImportError:
     pass # Silently ignore if not installed
 
-# Optional: sv-ttk for a modern look and feel
 try:
     import sv_ttk
 except ImportError:
@@ -32,6 +31,7 @@ from src.auth import TrackTitanAuth
 from src.scraper import SetupScraper
 from src.utils import create_directories
 from src.__version__ import __version__ as APP_VERSION
+from src.g61_dialog import Garage61Dialog
 
 def resource_path(relative_path):
     """ Get absolute path to resource, works for dev and for PyInstaller """
@@ -66,8 +66,6 @@ class DownloaderApp(tk.Tk):
         # Set application icon for window and Windows taskbar
         if sys.platform.startswith('win'):
             try:
-                # Set AppUserModelID to ensure the taskbar icon is correct on Windows.
-                # This is a unique identifier for the application.
                 import ctypes
                 app_id = "Feuerbach.TrackTitanDownloader.1" 
                 ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
@@ -79,12 +77,14 @@ class DownloaderApp(tk.Tk):
             try:
                 icon_path = resource_path("src/assets/icon.ico")
                 self.iconbitmap(icon_path)
+                self.icon_path = icon_path # Store for later use
             except tk.TclError:
                 logging.warning("Could not load application icon at 'src/assets/icon.ico'. Using default.")
         
         # --- Member variables ---
         self.email_var = tk.StringVar(value=os.getenv('TRACK_TITAN_EMAIL', ''))
         self.password_var = tk.StringVar(value=os.getenv('TRACK_TITAN_PASSWORD', ''))
+        self.icon_path = None
         
         default_path = Path(os.path.expanduser("~")) / "Documents" / "iRacing" / "setups"
         if not default_path.exists():
@@ -119,6 +119,7 @@ class DownloaderApp(tk.Tk):
         self._is_resizing = False
         # Accumulate log records so we can insert them in batches for better performance
         self._pending_log_records = []
+        self._garage61_folder_to_use = None
         
         # --- UI Styling ---
         self.apply_styles()
@@ -141,16 +142,15 @@ class DownloaderApp(tk.Tk):
         if sv_ttk:
             sv_ttk.set_theme("dark")
 
-        # A more vibrant, custom color palette
         self.BG_COLOR = "#1c1c1e" 
         self.FRAME_COLOR = "#2c2c2e"
-        self.ACCENT_COLOR = "#0A84FF" # A brighter, more electric blue
+        self.ACCENT_COLOR = "#0A84FF"
         self.DISCORD_COLOR = "#5865F2"
         self.TEXT_COLOR = "#ffffff"
-        self.SUBTLE_TEXT_COLOR = "#a1a1a6" # Brighter for better contrast
+        self.SUBTLE_TEXT_COLOR = "#a1a1a6"
         self.ERROR_COLOR = "#ff453a"
         self.WARNING_COLOR = "#ff9f0a"
-        self.SUCCESS_COLOR = "#32d74b" # A more vibrant green
+        self.SUCCESS_COLOR = "#32d74b"
         
         style = ttk.Style(self)
         
@@ -191,7 +191,7 @@ class DownloaderApp(tk.Tk):
             foreground=self.TEXT_COLOR,
             fieldbackground=self.FRAME_COLOR,
             borderwidth=0,
-            rowheight=30) # Increased row height for breathing room
+            rowheight=30)
         style.map("Treeview", background=[('selected', self.ACCENT_COLOR)])
         style.configure("Treeview.Heading",
             background=self.BG_COLOR,
@@ -202,7 +202,7 @@ class DownloaderApp(tk.Tk):
         
         # Style the progress bar
         style.configure("slick.Horizontal.TProgressbar", 
-                        troughcolor=self.BG_COLOR,  # Make trough invisible
+                        troughcolor=self.BG_COLOR,
                         background=self.SUCCESS_COLOR, 
                         borderwidth=0,
                         thickness=12) # Make the bar thicker
@@ -215,11 +215,11 @@ class DownloaderApp(tk.Tk):
         style.configure("Footer.TButton", font=footer_font, background=self.BG_COLOR, foreground=self.TEXT_COLOR, borderwidth=0, padding=(6, 2))
         style.map("Footer.TButton", 
             foreground=[
-                ('disabled', self.BG_COLOR), # Make text and background
+                ('disabled', self.BG_COLOR),
                 ('active', self.ACCENT_COLOR)
             ],
             background=[
-                ('disabled', self.BG_COLOR), # invisible when disabled
+                ('disabled', self.BG_COLOR),
                 ('active', self.BG_COLOR)
             ]
         )
@@ -264,7 +264,7 @@ class DownloaderApp(tk.Tk):
         paned_window = ttk.PanedWindow(main_frame, orient=tk.VERTICAL)
         paned_window.pack(fill=tk.BOTH, expand=True)
 
-        # Attempt to style the sash; fall back silently if the option isn't available (ttk.PanedWindow may not support it on all Tcl/Tk versions)
+        # Attempt to style the sash; fall back silently if the option isn't available
         try:
             paned_window.configure(sashrelief=tk.RAISED)
         except tk.TclError:
@@ -395,8 +395,8 @@ class DownloaderApp(tk.Tk):
         # Links
         links_frame = ttk.Frame(center_frame)
         links_frame.pack(pady=(2, 20))
-        self.create_hyperlink(links_frame, "GitHub Repo", "https://github.com/your-username/track-titan-downloader")
-        self.create_hyperlink(links_frame, "Website", "https://your-website.com")
+        self.create_hyperlink(links_frame, "GitHub Repo", "https://github.com/tfeuerbach/track-titan-downloader")
+        self.create_hyperlink(links_frame, "Website", "https://tfeuerbach.dev")
 
         # Back button
         back_button = ttk.Button(center_frame, text="< Back to Downloader", command=lambda: self.show_page(self.downloader_page))
@@ -522,22 +522,60 @@ class DownloaderApp(tk.Tk):
             self.progress_bar.stop()
             self.progress_bar.config(mode='determinate')
 
+    def scan_for_garage61_folders(self, base_path_str: str) -> list[str]:
+        """Scans for Garage 61 directories inside car folders."""
+        base_path = Path(base_path_str)
+        if not base_path.is_dir():
+            return []
+
+        g61_folders = set()
+        try:
+            # Assuming first level of subdirectories are car folders
+            for car_folder in base_path.iterdir():
+                if car_folder.is_dir():
+                    for sub_folder in car_folder.iterdir():
+                        if sub_folder.is_dir() and sub_folder.name.startswith("Garage 61"):
+                            g61_folders.add(sub_folder.name)
+        except Exception as e:
+            logging.warning(f"Could not scan for Garage 61 folders: {e}")
+
+        return sorted(list(g61_folders))
+
     def start_download(self):
         """Initiates the download process in a background thread."""
-        self.set_ui_state(is_running=True)
-        self.stop_event.clear()
-        self.progress_label_var.set("Scanning for setups...")
-        self.progress_var.set(0)
-        self.progress_bar.config(mode='indeterminate')
-        self.progress_bar.start(10)
-        self.thread = threading.Thread(target=self.run_download_flow, daemon=True)
-        self.thread.start()
+        self._check_for_g61_and_start_flow(self.run_download_flow)
 
     def start_discord_login(self):
         """Starts the user-assisted Discord login flow."""
+        self._check_for_g61_and_start_flow(self.run_discord_login_flow)
+
+    def _check_for_g61_and_start_flow(self, target_flow):
+        """Scans for G61 folders and starts the specified download flow."""
+        download_path = self.download_path_var.get()
+        g61_folders = self.scan_for_garage61_folders(download_path)
+
+        garage61_folder_to_use = None
+        if g61_folders:
+            dialog = Garage61Dialog(self, g61_folders, icon_path=self.icon_path)
+            result = dialog.show()
+            
+            if result is Garage61Dialog._CANCELLED:
+                logging.info("Operation cancelled by user from Garage 61 dialog.")
+                return # Abort the download/login flow
+
+            garage61_folder_to_use = result
+
         self.set_ui_state(is_running=True)
         self.stop_event.clear()
-        self.thread = threading.Thread(target=self.run_discord_login_flow, daemon=True)
+
+        # Common setup for both flows
+        if target_flow == self.run_download_flow:
+            self.progress_label_var.set("Scanning for setups...")
+            self.progress_var.set(0)
+            self.progress_bar.config(mode='indeterminate')
+            self.progress_bar.start(10)
+        
+        self.thread = threading.Thread(target=target_flow, args=(garage61_folder_to_use,), daemon=True)
         self.thread.start()
 
     def stop_download(self):
@@ -548,7 +586,7 @@ class DownloaderApp(tk.Tk):
             self.stop_button.config(state='disabled') # Prevent multiple clicks
             self.progress_label_var.set("Stopping...")
     
-    def _run_scraper(self, driver, setup_page, download_path):
+    def _run_scraper(self, driver, setup_page, download_path, garage61_folder: str | None = None):
         """Initializes and runs the SetupScraper, handling shared logic."""
         scraper = SetupScraper(
             session=driver,
@@ -556,7 +594,8 @@ class DownloaderApp(tk.Tk):
             delay=1.0,
             download_path=download_path,
             progress_queue=self.progress_queue,
-            stop_event=self.stop_event
+            stop_event=self.stop_event,
+            garage61_folder=garage61_folder
         )
         
         logging.info("Scraping and downloading setup listings...")
@@ -569,7 +608,7 @@ class DownloaderApp(tk.Tk):
         else:
             logging.info(f"Process complete! {len(setups)} setups downloaded successfully.")
 
-    def run_download_flow(self):
+    def run_download_flow(self, garage61_folder: str | None = None):
         """Handles the core download workflow: auth, scraping, and cleanup."""
         try:
             email = self.email_var.get()
@@ -601,7 +640,7 @@ class DownloaderApp(tk.Tk):
                 return
             
             logging.info("Authentication successful!")
-            self._run_scraper(driver, setup_page, download_path)
+            self._run_scraper(driver, setup_page, download_path, garage61_folder)
         
         except Exception as e:
             logging.error(f"An unexpected error occurred: {e}", exc_info=True)
@@ -612,7 +651,7 @@ class DownloaderApp(tk.Tk):
             self.after(0, self.set_ui_state, False)
             self.progress_queue.put({'reset': True})
 
-    def run_discord_login_flow(self):
+    def run_discord_login_flow(self, garage61_folder: str | None = None):
         """Handles the user-assisted Discord login, then scraping."""
         try:
             download_path = self.download_path_var.get()
@@ -652,7 +691,7 @@ class DownloaderApp(tk.Tk):
             self.progress_bar.config(mode='indeterminate')
             self.progress_bar.start(10)
             
-            self._run_scraper(driver, setup_page, download_path)
+            self._run_scraper(driver, setup_page, download_path, garage61_folder)
 
         except Exception as e:
             logging.error(f"An unexpected error occurred during Discord login flow: {e}", exc_info=True)
@@ -665,4 +704,4 @@ class DownloaderApp(tk.Tk):
 
 if __name__ == '__main__':
     app = DownloaderApp()
-    app.mainloop() 
+    app.mainloop()

@@ -42,13 +42,15 @@ class SetupScraper:
                  setup_page: str, delay: float = 1.0, 
                  download_path: Optional[str] = None,
                  progress_queue: Optional[Queue] = None,
-                 stop_event: Optional[threading.Event] = None):
+                 stop_event: Optional[threading.Event] = None,
+                 garage61_folder: Optional[str] = None):
         self.session = session
         self.setup_page = setup_page
         self.delay = delay
         self.download_path = download_path
         self.progress_queue = progress_queue
         self.stop_event = stop_event
+        self.garage61_folder = garage61_folder
     
     def _report_progress(self, value: Optional[int] = None, max_val: Optional[int] = None):
         """Sends progress updates to the main GUI thread."""
@@ -314,9 +316,13 @@ class SetupScraper:
                 sanitized_package = sanitize_filename(setup_package_name)
 
                 # Construct the final destination directory: download_dir/car/track/package/
-                final_dir = download_dir / sanitized_car / sanitized_track / sanitized_package
+                dest_path = download_dir / sanitized_car
+                if self.garage61_folder:
+                    dest_path = dest_path / self.garage61_folder
+                final_dir = dest_path / sanitized_track / sanitized_package
 
                 if final_dir.exists():
+                    logger.info(f"'{final_dir.relative_to(download_dir)}' already exists. Replacing.")
                     shutil.rmtree(final_dir)
                 final_dir.mkdir(parents=True)
 
