@@ -103,6 +103,7 @@ class DownloaderApp(tk.Tk):
         self.thread = None
         self.auth_session = None
         self.stop_event = threading.Event()
+        self.skip_event = threading.Event()
         self.progress_max = 0
         self.progress_label_var = tk.StringVar(value="")
 
@@ -332,21 +333,25 @@ class DownloaderApp(tk.Tk):
         # --- Control & Progress ---
         control_frame = ttk.Frame(top_section_frame)
         control_frame.pack(fill=tk.X, expand=False, pady=(0, 20))
-        control_frame.columnconfigure(2, weight=1) # Make progress bar expand
+        control_frame.columnconfigure(3, weight=1) # Make progress bar expand
 
         self.start_button = ttk.Button(control_frame, text="Start Download", command=self.start_download)
         self.start_button.grid(row=0, column=0, padx=(0, 5))
         
         self.stop_button = ttk.Button(control_frame, text="Stop", command=self.stop_download)
-        self.stop_button.grid(row=0, column=1, padx=(0, 15))
+        self.stop_button.grid(row=0, column=1, padx=(0, 5))
         self.stop_button.grid_remove() # Hide it initially
+
+        self.skip_button = ttk.Button(control_frame, text="Skip", command=self.skip_setup)
+        self.skip_button.grid(row=0, column=2, padx=(0, 15))
+        self.skip_button.grid_remove()
 
         self.progress_var = tk.DoubleVar()
         self.progress_bar = ttk.Progressbar(control_frame, variable=self.progress_var, maximum=100, style="slick.Horizontal.TProgressbar")
-        self.progress_bar.grid(row=0, column=2, sticky=tk.EW)
+        self.progress_bar.grid(row=0, column=3, sticky=tk.EW)
         
         self.progress_label = ttk.Label(control_frame, textvariable=self.progress_label_var, font=(self.font_family, 10, 'italic'), anchor='e')
-        self.progress_label.grid(row=0, column=3, sticky=tk.E, padx=(10, 0))
+        self.progress_label.grid(row=0, column=4, sticky=tk.E, padx=(10, 0))
 
         # Hide progress elements initially
         self.progress_bar.grid_remove()
@@ -531,11 +536,13 @@ class DownloaderApp(tk.Tk):
         
         if is_running:
             self.stop_button.grid() # Show stop button
+            self.skip_button.grid() # Show skip button
             self.start_button.grid_remove() # Hide start
             self.progress_bar.grid()
             self.progress_label.grid()
         else:
             self.stop_button.grid_remove() # Hide stop
+            self.skip_button.grid_remove() # Hide skip button
             self.start_button.grid() # Show start
             self.stop_button.config(state='normal') # Re-enable for next run
             self.progress_bar.grid_remove()
@@ -588,6 +595,7 @@ class DownloaderApp(tk.Tk):
 
         self.set_ui_state(is_running=True)
         self.stop_event.clear()
+        self.skip_event.clear()
 
         # Common setup for both flows
         if target_flow == self.run_download_flow:
@@ -607,6 +615,12 @@ class DownloaderApp(tk.Tk):
             self.stop_button.config(state='disabled') # Prevent multiple clicks
             self.progress_label_var.set("Stopping...")
     
+    def skip_setup(self):
+        """Sets an event to signal the download thread to skip the current setup."""
+        if self.thread and self.thread.is_alive():
+            logging.info("Skip request received. Moving to the next setup...")
+            self.skip_event.set()
+
     def _run_scraper(self, driver, setup_page, download_path, garage61_folder: str | None = None):
         """Initializes and runs the SetupScraper, handling shared logic."""
         scraper = SetupScraper(
@@ -616,6 +630,7 @@ class DownloaderApp(tk.Tk):
             download_path=download_path,
             progress_queue=self.progress_queue,
             stop_event=self.stop_event,
+            skip_event=self.skip_event,
             garage61_folder=garage61_folder
         )
         
@@ -654,7 +669,7 @@ class DownloaderApp(tk.Tk):
                 download_path=download_path
             )
         
-            logging.info("Authenticating with TrackTitan...")
+            logging.info("Authenticating with Track Titan...")
             driver = self.auth_session.authenticate()
             if not driver:
                 logging.error("Authentication failed! Check credentials and network.")

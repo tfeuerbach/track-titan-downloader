@@ -43,6 +43,7 @@ class SetupScraper:
                  download_path: Optional[str] = None,
                  progress_queue: Optional[Queue] = None,
                  stop_event: Optional[threading.Event] = None,
+                 skip_event: Optional[threading.Event] = None,
                  garage61_folder: Optional[str] = None):
         self.session = session
         self.setup_page = setup_page
@@ -50,6 +51,7 @@ class SetupScraper:
         self.download_path = download_path
         self.progress_queue = progress_queue
         self.stop_event = stop_event
+        self.skip_event = skip_event
         self.garage61_folder = garage61_folder
     
     def _report_progress(self, value: Optional[int] = None, max_val: Optional[int] = None):
@@ -156,6 +158,13 @@ class SetupScraper:
                 for active_span in active_spans:
                     # Navigate from the '(Active)' span to the div containing the setup cards.
                     header_div = active_span.find_element(By.XPATH, "./parent::div")
+                    
+                    # Check the header text to exclude specific paid sections.
+                    header_text = header_div.text
+                    if "HYMO iRacing Bundles" in header_text:
+                        logger.info(f"Skipping paid bundle section: '{header_text.strip()}'")
+                        continue
+
                     active_container = header_div.find_element(By.XPATH, "./following-sibling::div")
                     
                     # Find setup links only within that active container.
@@ -180,6 +189,7 @@ class SetupScraper:
             logger.info(f"Found a total of {len(setup_page_urls)} setup links across all 'Active' sections.")
             
             setups = []
+            failed_downloads = []
             total_setups = len(setup_page_urls)
             self._report_progress(max_val=total_setups, value=0)
 
@@ -187,6 +197,9 @@ class SetupScraper:
                 if self.stop_event and self.stop_event.is_set():
                     logger.info("Stop event received, halting setup downloads.")
                     break
+                
+                if self.skip_event:
+                    self.skip_event.clear() # Reset for the current item.
 
                 if not url:
                     self._report_progress(value=i + 1)
@@ -195,9 +208,16 @@ class SetupScraper:
                 setup_info = self._download_and_organize_one_setup(url)
                 if setup_info:
                     setups.append(setup_info)
+                else:
+                    failed_downloads.append(url)
                 
                 self._report_progress(value=i + 1)
                 time.sleep(self.delay)
+
+            if failed_downloads:
+                logger.warning(f"{len(failed_downloads)} setup(s) could not be downloaded:")
+                for failed_url in failed_downloads:
+                    logger.warning(f"  - {failed_url}")
 
             logger.info(f"Successfully downloaded and organized {len(setups)} setups from the active section.")
             return setups
@@ -216,42 +236,75 @@ class SetupScraper:
     
     def _download_and_organize_one_setup(self, setup_page_url: str) -> Optional[SetupInfo]:
         """
-        Handles the download and file organization for a single setup.
+        Handles the download and file organization for a single setup,
+        with a retry mechanism for transient download errors.
         """
         download_dir = Path(self.download_path)
-
-        # Trigger the download
         files_before = set(download_dir.glob('*.zip'))
+        
+        MAX_ATTEMPTS = 2
+        for attempt in range(MAX_ATTEMPTS):
+            if self.skip_event and self.skip_event.is_set():
+                logger.warning(f"Skipping download for {setup_page_url} due to user request.")
+                return None
 
-        try:
-            self.session.get(setup_page_url)
-            wait = WebDriverWait(self.session, 10)
-            
-            download_button = wait.until(EC.element_to_be_clickable(
-                (By.XPATH, "//button[contains(text(), 'Download Latest Version')]")
-            ))
-            self.session.execute_script("arguments[0].click();", download_button)
-            
             try:
-                manual_download_wait = WebDriverWait(self.session, 10)
-                manual_download_button = manual_download_wait.until(EC.element_to_be_clickable(
-                    (By.XPATH, "//button[contains(text(), 'Download Manually')]")
+                if attempt > 0:
+                    logger.info(f"Retrying download for {setup_page_url} (Attempt {attempt + 1}/{MAX_ATTEMPTS})")
+                
+                self.session.get(setup_page_url)
+                wait = WebDriverWait(self.session, 10)
+                
+                download_button = wait.until(EC.element_to_be_clickable(
+                    (By.XPATH, "//button[contains(text(), 'Download Latest Version')]")
                 ))
-                self.session.execute_script("arguments[0].click();", manual_download_button)
-            except (NoSuchElementException, TimeoutException):
-                logger.debug("Did not find 'Download Manually' button, assuming direct download.")
-                pass
+                self.session.execute_script("arguments[0].click();", download_button)
+                
+                try:
+                    manual_download_wait = WebDriverWait(self.session, 10)
+                    manual_download_button = manual_download_wait.until(EC.element_to_be_clickable(
+                        (By.XPATH, "//button[contains(text(), 'Download Manually')]")
+                    ))
+                    self.session.execute_script("arguments[0].click();", manual_download_button)
+                except (NoSuchElementException, TimeoutException):
+                    logger.debug("Did not find 'Download Manually' button, assuming direct download.")
+                    pass
 
-        except Exception as e:
-            logger.error(f"Could not trigger download for setup at {setup_page_url}: {e}")
-            return None
+                # Check for a specific failure notification from the website.
+                try:
+                    error_notification_xpath = "//div[contains(text(), 'There was an issue downloading this setup')]"
+                    error_wait = WebDriverWait(self.session, 5) # Short wait, it appears fast.
+                    error_wait.until(EC.presence_of_element_located((By.XPATH, error_notification_xpath)))
+                    
+                    # If found, this attempt failed. Loop will retry if possible.
+                    if attempt < MAX_ATTEMPTS - 1:
+                        continue
+                    else:
+                        logger.error(f"Download failed for {setup_page_url} after {MAX_ATTEMPTS} attempts due to site error.")
+                        return None
+                except TimeoutException:
+                    # This is the expected success path: no error notification appeared.
+                    # Break the retry loop and proceed to check for the downloaded file.
+                    break
 
+            except Exception as e:
+                logger.error(f"Could not trigger download for {setup_page_url} on attempt {attempt + 1}: {e}")
+                if attempt < MAX_ATTEMPTS - 1:
+                    time.sleep(2) # Wait a moment before retrying on general exception
+                    continue
+                else:
+                    return None
+        
         # Wait for the new file to appear in the downloads folder.
         latest_zip_file = None
         try:
             end_time = time.time() + 60  # Wait 60 seconds
             new_file_appeared = False
             while time.time() < end_time:
+                if self.skip_event and self.skip_event.is_set():
+                    logger.warning(f"Skipping download for {setup_page_url} due to user request.")
+                    return None
+
                 files_after = set(download_dir.glob('*.zip'))
                 new_files = files_after - files_before
                 if new_files:
