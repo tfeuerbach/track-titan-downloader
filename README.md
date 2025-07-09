@@ -1,6 +1,20 @@
 # TrackTitan Setup Downloader
 
-A GUI application to download the latest "Active" HYMO setups for the week off of TrackTitan.io all at once. The Track Titan desktop application only downloads setups for a given car as you join a race with one. This is generally a non-issue for 90% of users but I like to get 100% of what I pay for when I'm subscribing to a service. For that reason, I created this so that I didn't need to manually download every setup or join a session for every car in that season/week.
+A GUI application to download the latest "Active" HYMO setups for the week off of TrackTitan.io all at once. The Track Titan desktop app only downloads setups for a given car as you join a race with one. While, this is generally a non-issue for 90% of users, I like to get 100% of what I pay for when I'm subscribing to a service like this. For that reason, I created this so that I didn't need to manually download every setup or join a session for every car in that season/week.
+
+TrackTitan doesn't provide any sort of API so this tool leverages Selenium to mock user interaction with a headless browser. An option to view the browser and what its doing is present.
+
+## Disclaimer
+
+**This tool is for personal, non-commercial use only.**
+
+In accordance with the [TrackTitan Terms and Conditions](https://www.tracktitan.io/terms-and-conditions), you are explicitly prohibited from sharing, distributing, or using for commercial purposes any car setups downloaded from their service. This tool is intended solely for downloading all the setups up front/in bulk for a week.
+
+
+## Features
+
+- Simple GUI for easy operation.
+- Login with your TrackTitan credentials or via Discord.
 
 ## Installation & Usage
 
@@ -41,5 +55,4 @@ Documents/iRacing/setups/
 ## Notes
 
 - This tool scrapes the TrackTitan website. Changes to the website's structure may break the tool.
-- Always ensure you have the correct login credentials and download path set in the application.
-- The browser window can be shown (by unchecking the box) to help debug login issues. 
+- The browser window can be shown (by unchecking the box) to help debug login issues.

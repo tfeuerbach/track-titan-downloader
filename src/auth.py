@@ -63,7 +63,7 @@ class TrackTitanAuth:
         except PermissionError:
             logger.error(f"Permission denied for download directory: {download_path}. Falling back to {default_download_dir}")
             download_path = default_download_dir
-            download_path.mkdir(parents=True, exist_ok=True) # Let it raise if the fallback fails
+            download_path.mkdir(parents=True, exist_ok=True)
 
         logger.info(f"Setting browser download directory to: {download_path}")
 
@@ -92,7 +92,44 @@ class TrackTitanAuth:
             self.driver = webdriver.Chrome(service=service, options=chrome_options)
             
             self.driver.get(self.login_url)
-            time.sleep(2)
+            
+            # Actively poll for 5 seconds to find and close any pop-up modals.
+            logger.info("Starting a 5-second polling period to close any pop-ups...")
+            end_time = time.time() + 5
+            popup_closed = False
+            while time.time() < end_time and not popup_closed:
+                try:
+                    # Precise XPath for the SVG button in a modal, plus general fallbacks.
+                    close_button_xpath = (
+                        "//div[contains(@class, 'Modal_ModalContent')]/button[.//*[local-name()='svg']] | "
+                        "//button[@aria-label='Close' or @aria-label='close'] | "
+                        "//button[normalize-space()='X' or normalize-space()='×'] | "
+                        "//button[contains(., 'Accept') or contains(., 'Agree') or contains(., 'Dismiss') or contains(., 'Got it')]"
+                    )
+
+                    # Use a short wait time within the loop
+                    close_buttons = WebDriverWait(self.driver, 0.5).until(
+                        EC.presence_of_all_elements_located((By.XPATH, close_button_xpath))
+                    )
+                    
+                    for button in reversed(close_buttons):
+                        if button.is_displayed() and button.is_enabled():
+                            logger.info(f"Found and clicked a pop-up button: '{button.text or 'SVG/Close Button'}'")
+                            self.driver.execute_script("arguments[0].click();", button)
+                            popup_closed = True
+                            time.sleep(1.5)
+                            break # Exit inner loop once one is closed
+                
+                except TimeoutException:
+                    pass # No button found, continue polling.
+                except Exception as e:
+                    logger.warning(f"Error while trying to close pop-ups during polling: {e}")
+                
+                if not popup_closed:
+                    time.sleep(0.5)
+            
+            if not popup_closed:
+                logger.info("Polling period finished. No pop-ups were found or closed.")
             
             wait = WebDriverWait(self.driver, 10)
             

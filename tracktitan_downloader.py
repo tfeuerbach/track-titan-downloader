@@ -22,7 +22,6 @@ try:
 except ImportError:
     pass # Silently ignore if not installed
 
-# Optional: sv-ttk for a modern look and feel
 try:
     import sv_ttk
 except ImportError:
@@ -32,6 +31,7 @@ from src.auth import TrackTitanAuth
 from src.scraper import SetupScraper
 from src.utils import create_directories
 from src.__version__ import __version__ as APP_VERSION
+from src.g61_dialog import Garage61Dialog
 
 def resource_path(relative_path):
     """ Get absolute path to resource, works for dev and for PyInstaller """
@@ -57,17 +57,15 @@ class DownloaderApp(tk.Tk):
     
     def __init__(self):
         super().__init__()
-        self.withdraw() # Hide window to prevent pop-in effect
+        self.withdraw()
         
         self.APP_VERSION = APP_VERSION
-        self.title(f"TrackTitan Setup Downloader - {self.APP_VERSION}")
-        self.geometry("800x750") # Increased height for footer
+        self.title(f"Track Titan Setup Downloader - {self.APP_VERSION}")
+        self.geometry("800x850")
 
         # Set application icon for window and Windows taskbar
         if sys.platform.startswith('win'):
             try:
-                # Set AppUserModelID to ensure the taskbar icon is correct on Windows.
-                # This is a unique identifier for the application.
                 import ctypes
                 app_id = "Feuerbach.TrackTitanDownloader.1" 
                 ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
@@ -79,12 +77,14 @@ class DownloaderApp(tk.Tk):
             try:
                 icon_path = resource_path("src/assets/icon.ico")
                 self.iconbitmap(icon_path)
+                self.icon_path = icon_path # Store for later use
             except tk.TclError:
                 logging.warning("Could not load application icon at 'src/assets/icon.ico'. Using default.")
         
         # --- Member variables ---
         self.email_var = tk.StringVar(value=os.getenv('TRACK_TITAN_EMAIL', ''))
         self.password_var = tk.StringVar(value=os.getenv('TRACK_TITAN_PASSWORD', ''))
+        self.icon_path = None
         
         default_path = Path(os.path.expanduser("~")) / "Documents" / "iRacing" / "setups"
         if not default_path.exists():
@@ -103,6 +103,7 @@ class DownloaderApp(tk.Tk):
         self.thread = None
         self.auth_session = None
         self.stop_event = threading.Event()
+        self.skip_event = threading.Event()
         self.progress_max = 0
         self.progress_label_var = tk.StringVar(value="")
 
@@ -114,6 +115,12 @@ class DownloaderApp(tk.Tk):
         # --- Queues for Thread Communication ---
         self.log_queue = Queue()
         self.progress_queue = Queue()
+        
+        # Track resize state to avoid heavy UI updates while the user drags the sash
+        self._is_resizing = False
+        # Accumulate log records so we can insert them in batches for better performance
+        self._pending_log_records = []
+        self._garage61_folder_to_use = None
         
         # --- UI Styling ---
         self.apply_styles()
@@ -136,16 +143,15 @@ class DownloaderApp(tk.Tk):
         if sv_ttk:
             sv_ttk.set_theme("dark")
 
-        # A more vibrant, custom color palette
         self.BG_COLOR = "#1c1c1e" 
         self.FRAME_COLOR = "#2c2c2e"
-        self.ACCENT_COLOR = "#0A84FF" # A brighter, more electric blue
+        self.ACCENT_COLOR = "#0A84FF"
         self.DISCORD_COLOR = "#5865F2"
         self.TEXT_COLOR = "#ffffff"
-        self.SUBTLE_TEXT_COLOR = "#a1a1a6" # Brighter for better contrast
+        self.SUBTLE_TEXT_COLOR = "#a1a1a6"
         self.ERROR_COLOR = "#ff453a"
         self.WARNING_COLOR = "#ff9f0a"
-        self.SUCCESS_COLOR = "#32d74b" # A more vibrant green
+        self.SUCCESS_COLOR = "#32d74b"
         
         style = ttk.Style(self)
         
@@ -160,6 +166,11 @@ class DownloaderApp(tk.Tk):
         style.configure('TLabelframe', background=self.BG_COLOR, borderwidth=0)
         style.configure('TLabelframe.Label', background=self.BG_COLOR, foreground=self.SUBTLE_TEXT_COLOR, font=(font_family, 12, 'italic'))
         style.configure('TLabel', background=self.BG_COLOR, foreground=self.TEXT_COLOR, font=(font_family, 10))
+        
+        # Add style for the PanedWindow sash
+        style.configure('TPanedwindow', background=self.BG_COLOR)
+        style.configure('TPanedwindow.Sash', sashthickness=6, background=self.FRAME_COLOR, borderwidth=0)
+        style.map('TPanedwindow.Sash', background=[('active', self.ACCENT_COLOR)])
         
         style.configure('TEntry', fieldbackground=self.FRAME_COLOR, foreground=self.TEXT_COLOR, borderwidth=0, insertcolor=self.TEXT_COLOR)
         style.map('TEntry', fieldbackground=[('focus', '#3a3a3c')]) # Highlight on focus
@@ -181,7 +192,7 @@ class DownloaderApp(tk.Tk):
             foreground=self.TEXT_COLOR,
             fieldbackground=self.FRAME_COLOR,
             borderwidth=0,
-            rowheight=30) # Increased row height for breathing room
+            rowheight=30)
         style.map("Treeview", background=[('selected', self.ACCENT_COLOR)])
         style.configure("Treeview.Heading",
             background=self.BG_COLOR,
@@ -192,7 +203,7 @@ class DownloaderApp(tk.Tk):
         
         # Style the progress bar
         style.configure("slick.Horizontal.TProgressbar", 
-                        troughcolor=self.BG_COLOR,  # Make trough invisible
+                        troughcolor=self.BG_COLOR,
                         background=self.SUCCESS_COLOR, 
                         borderwidth=0,
                         thickness=12) # Make the bar thicker
@@ -205,11 +216,11 @@ class DownloaderApp(tk.Tk):
         style.configure("Footer.TButton", font=footer_font, background=self.BG_COLOR, foreground=self.TEXT_COLOR, borderwidth=0, padding=(6, 2))
         style.map("Footer.TButton", 
             foreground=[
-                ('disabled', self.BG_COLOR), # Make text and background
+                ('disabled', self.BG_COLOR),
                 ('active', self.ACCENT_COLOR)
             ],
             background=[
-                ('disabled', self.BG_COLOR), # invisible when disabled
+                ('disabled', self.BG_COLOR),
                 ('active', self.BG_COLOR)
             ]
         )
@@ -220,6 +231,10 @@ class DownloaderApp(tk.Tk):
         # About page styles
         style.configure("About.Header.TLabel", font=(font_family, 18, 'bold'), background=self.BG_COLOR)
         style.configure("About.TLabel", font=(font_family, 11), background=self.BG_COLOR)
+        style.configure("Disclaimer.TLabel",
+            font=(font_family, 10, 'italic'),
+            foreground=self.SUBTLE_TEXT_COLOR,
+            background=self.BG_COLOR)
 
     def create_master_layout(self):
         """Creates the main window structure, including pages and the footer."""
@@ -249,18 +264,36 @@ class DownloaderApp(tk.Tk):
         """Initializes and places all widgets for the main downloader UI."""
         main_frame = ttk.Frame(parent, padding=(25, 25, 25, 5))
         main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Create a PanedWindow to allow resizing of the log section
+        paned_window = ttk.PanedWindow(main_frame, orient=tk.VERTICAL)
+        paned_window.pack(fill=tk.BOTH, expand=True)
+
+        # Attempt to style the sash; fall back silently if the option isn't available
+        try:
+            paned_window.configure(sashrelief=tk.RAISED)
+        except tk.TclError:
+            pass  # Ignore if the underlying Tk implementation does not recognise this option
+
+        # Detect when the user starts or stops dragging the sash so we can pause heavy UI updates
+        paned_window.bind("<ButtonPress-1>", lambda e: setattr(self, "_is_resizing", True))
+        paned_window.bind("<ButtonRelease-1>", lambda e: setattr(self, "_is_resizing", False))
+
+        # A frame to hold the non-resizable top section
+        top_section_frame = ttk.Frame(paned_window)
+        paned_window.add(top_section_frame, weight=0)
         
         # --- Input Fields ---
-        input_frame = ttk.LabelFrame(main_frame, text="CONFIGURATION", padding="20")
+        input_frame = ttk.LabelFrame(top_section_frame, text="CONFIGURATION", padding="20")
         input_frame.pack(fill=tk.X, expand=False, pady=(0, 25))
         input_frame.columnconfigure(1, weight=1)
 
         pad_y = 8
-        ttk.Label(input_frame, text="TrackTitan Email:").grid(row=0, column=0, sticky=tk.W, pady=pad_y)
+        ttk.Label(input_frame, text="Track Titan Email:").grid(row=0, column=0, sticky=tk.W, pady=pad_y)
         self.email_entry = ttk.Entry(input_frame, textvariable=self.email_var, width=50)
         self.email_entry.grid(row=0, column=1, columnspan=2, sticky=tk.EW, padx=10, pady=pad_y)
 
-        ttk.Label(input_frame, text="TrackTitan Password:").grid(row=1, column=0, sticky=tk.W, pady=pad_y)
+        ttk.Label(input_frame, text="Track Titan Password:").grid(row=1, column=0, sticky=tk.W, pady=pad_y)
         self.password_entry = ttk.Entry(input_frame, textvariable=self.password_var, show="*", width=50)
         self.password_entry.grid(row=1, column=1, columnspan=2, sticky=tk.EW, padx=10, pady=pad_y)
         
@@ -298,31 +331,37 @@ class DownloaderApp(tk.Tk):
         self.show_browser_check.grid(row=5, column=0, columnspan=3, sticky=tk.W, pady=(15, 5))
 
         # --- Control & Progress ---
-        control_frame = ttk.Frame(main_frame)
+        control_frame = ttk.Frame(top_section_frame)
         control_frame.pack(fill=tk.X, expand=False, pady=(0, 20))
-        control_frame.columnconfigure(2, weight=1) # Make progress bar expand
+        control_frame.columnconfigure(3, weight=1) # Make progress bar expand
 
         self.start_button = ttk.Button(control_frame, text="Start Download", command=self.start_download)
         self.start_button.grid(row=0, column=0, padx=(0, 5))
         
         self.stop_button = ttk.Button(control_frame, text="Stop", command=self.stop_download)
-        self.stop_button.grid(row=0, column=1, padx=(0, 15))
+        self.stop_button.grid(row=0, column=1, padx=(0, 5))
         self.stop_button.grid_remove() # Hide it initially
+
+        self.skip_button = ttk.Button(control_frame, text="Skip", command=self.skip_setup)
+        self.skip_button.grid(row=0, column=2, padx=(0, 15))
+        self.skip_button.grid_remove()
 
         self.progress_var = tk.DoubleVar()
         self.progress_bar = ttk.Progressbar(control_frame, variable=self.progress_var, maximum=100, style="slick.Horizontal.TProgressbar")
-        self.progress_bar.grid(row=0, column=2, sticky=tk.EW)
+        self.progress_bar.grid(row=0, column=3, sticky=tk.EW)
         
         self.progress_label = ttk.Label(control_frame, textvariable=self.progress_label_var, font=(self.font_family, 10, 'italic'), anchor='e')
-        self.progress_label.grid(row=0, column=3, sticky=tk.E, padx=(10, 0))
+        self.progress_label.grid(row=0, column=4, sticky=tk.E, padx=(10, 0))
 
         # Hide progress elements initially
         self.progress_bar.grid_remove()
         self.progress_label.grid_remove()
 
         # --- Log Viewer ---
-        log_frame = ttk.LabelFrame(main_frame, text="LOG", padding="20")
-        log_frame.pack(fill=tk.BOTH, expand=True)
+        log_frame = ttk.LabelFrame(paned_window, text="LOG", padding="20")
+        paned_window.add(log_frame, weight=1) # Add to paned window as the bottom, resizable pane
+        log_frame.rowconfigure(0, weight=1)
+        log_frame.columnconfigure(0, weight=1)
 
         self.log_tree = ttk.Treeview(log_frame, columns=('Time', 'Level', 'Message'), show='headings')
         self.log_tree.heading('Time', text='Time')
@@ -330,13 +369,16 @@ class DownloaderApp(tk.Tk):
         self.log_tree.heading('Message', text='Message')
         self.log_tree.column('Time', width=120, stretch=tk.NO, anchor='w')
         self.log_tree.column('Level', width=100, stretch=tk.NO, anchor='w')
-        self.log_tree.column('Message', width=550)
+        self.log_tree.column('Message', width=400)
         
         vsb = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_tree.yview)
-        vsb.pack(side='right', fill='y')
+        vsb.grid(row=0, column=1, sticky='ns')
         self.log_tree.configure(yscrollcommand=vsb.set)
         
-        self.log_tree.pack(fill=tk.BOTH, expand=True)
+        self.log_tree.grid(row=0, column=0, sticky='nsew')
+
+        # Adjust the 'Message' column width when the widget is resized.
+        self.log_tree.bind('<Configure>', self._adjust_log_columns)
 
         # Tags for coloring
         self.log_tree.tag_configure('INFO', foreground=self.TEXT_COLOR)
@@ -353,11 +395,23 @@ class DownloaderApp(tk.Tk):
         center_frame = ttk.Frame(about_frame)
         center_frame.pack(expand=True)
 
-        header = ttk.Label(center_frame, text="TrackTitan Downloader", style="About.Header.TLabel")
+        header = ttk.Label(center_frame, text="Track Titan Downloader", style="About.Header.TLabel")
         header.pack(pady=(0, 5))
         
         version_label = ttk.Label(center_frame, text=f"Version {self.APP_VERSION}", foreground=self.SUBTLE_TEXT_COLOR, style="About.TLabel")
         version_label.pack(pady=(0, 25))
+
+        # Disclaimer
+        disclaimer_frame = ttk.Frame(center_frame)
+        disclaimer_frame.pack(fill=tk.X, expand=True, pady=(10, 20))
+
+        disclaimer_text = (
+            "This tool is for personal, non-commercial use, intended as a means to download all setups in bulk. "
+            "In accordance with the Track Titan Terms and Conditions, you are prohibited from sharing or "
+            "distributing any downloaded setups.\n\n"
+        )
+        disclaimer_label = ttk.Label(disclaimer_frame, text=disclaimer_text, wraplength=450, justify=tk.CENTER, style="Disclaimer.TLabel")
+        disclaimer_label.pack(fill=tk.X)
 
         # Credits
         ttk.Label(center_frame, text="Created by Thomas Feuerbach", style="About.TLabel").pack(pady=(10, 2))
@@ -365,8 +419,8 @@ class DownloaderApp(tk.Tk):
         # Links
         links_frame = ttk.Frame(center_frame)
         links_frame.pack(pady=(2, 20))
-        self.create_hyperlink(links_frame, "GitHub Repo", "https://github.com/your-username/track-titan-downloader")
-        self.create_hyperlink(links_frame, "Website", "https://your-website.com")
+        self.create_hyperlink(links_frame, "GitHub Repo", "https://github.com/tfeuerbach/track-titan-downloader")
+        self.create_hyperlink(links_frame, "Website", "https://tfeuerbach.dev")
 
         # Back button
         back_button = ttk.Button(center_frame, text="< Back to Downloader", command=lambda: self.show_page(self.downloader_page))
@@ -375,9 +429,11 @@ class DownloaderApp(tk.Tk):
     def show_page(self, page_to_show):
         """Raises the specified frame and manages footer button visibility."""
         if page_to_show == self.about_page:
-            self.about_button.config(state='disabled')
+            self.about_button.pack_forget()
         else:
-            self.about_button.config(state='normal')
+            # Ensure the button is not already visible to avoid re-packing it.
+            if not self.about_button.winfo_ismapped():
+                self.about_button.pack(side=tk.LEFT, padx=20)
         page_to_show.tkraise()
 
     def create_hyperlink(self, parent, text, url):
@@ -404,9 +460,17 @@ class DownloaderApp(tk.Tk):
 
     def process_log_queue(self):
         """Polls the log queue and displays new records in the log view."""
+        # Drain the queue first
         try:
             while True:
                 record = self.log_queue.get_nowait()
+                self._pending_log_records.append(record)
+        except Empty:
+            pass  # Nothing left
+
+        # Insert batched records only if we are not currently dragging the sash
+        if not self._is_resizing and self._pending_log_records:
+            for record in self._pending_log_records:
                 log_time = time.strftime('%H:%M:%S', time.localtime(record.created))
                 level = record.levelname
                 msg = record.getMessage()
@@ -416,11 +480,13 @@ class DownloaderApp(tk.Tk):
                     tag = "SUCCESS"
 
                 self.log_tree.insert('', tk.END, values=(f'  {log_time}', f'  {level}', f'  {msg}'), tags=(tag,))
-                self.log_tree.yview_moveto(1.0)
-        except Empty:
-            pass # The queue is empty
-        self.after(100, self.process_log_queue)
-        
+            # Auto-scroll once per batch instead of per line
+            self.log_tree.yview_moveto(1.0)
+            self._pending_log_records.clear()
+
+        # Re-schedule after a short delay to keep UI responsive without hogging the event loop
+        self.after(150, self.process_log_queue)
+
     def process_progress_queue(self):
         """Polls the progress queue to update the progress bar."""
         try:
@@ -433,7 +499,7 @@ class DownloaderApp(tk.Tk):
                     self.progress_bar.config(mode='determinate')
                     new_max = progress_update['max']
                     self.progress_max = new_max
-                    self.progress_bar.config(maximum=new_max if new_max > 0 else 1) # Dummy max
+                    self.progress_bar.config(maximum=new_max if new_max > 0 else 1)  # Dummy max
                     if new_max == 0:
                         self.progress_label_var.set("No new setups found.")
 
@@ -444,19 +510,21 @@ class DownloaderApp(tk.Tk):
                     if self.progress_max > 0:
                         percent = (current_val / self.progress_max) * 100
                         if current_val == self.progress_max:
-                             self.progress_label_var.set(f"Finalizing...")
+                            self.progress_label_var.set("Finalizing...")
                         else:
                             self.progress_label_var.set(f"{current_val}/{self.progress_max} ({percent:.0f}%)")
                 
                 if progress_update.get('reset'):
                     self.progress_var.set(0)
                     self.progress_label_var.set("")
-                    self.progress_max = 0 # Reset max
+                    self.progress_max = 0  # Reset max
                     self.progress_bar.stop()
                     self.progress_bar.config(mode='determinate')
         except Empty:
             pass
-        self.after(100, self.process_progress_queue)
+
+        # Re-schedule after a short delay to keep UI responsive without hogging the event loop
+        self.after(150, self.process_progress_queue)
 
     def set_ui_state(self, is_running):
         """Toggles the state of UI controls based on download status."""
@@ -468,11 +536,13 @@ class DownloaderApp(tk.Tk):
         
         if is_running:
             self.stop_button.grid() # Show stop button
+            self.skip_button.grid() # Show skip button
             self.start_button.grid_remove() # Hide start
             self.progress_bar.grid()
             self.progress_label.grid()
         else:
             self.stop_button.grid_remove() # Hide stop
+            self.skip_button.grid_remove() # Hide skip button
             self.start_button.grid() # Show start
             self.stop_button.config(state='normal') # Re-enable for next run
             self.progress_bar.grid_remove()
@@ -480,22 +550,61 @@ class DownloaderApp(tk.Tk):
             self.progress_bar.stop()
             self.progress_bar.config(mode='determinate')
 
+    def scan_for_garage61_folders(self, base_path_str: str) -> list[str]:
+        """Scans for Garage 61 directories inside car folders."""
+        base_path = Path(base_path_str)
+        if not base_path.is_dir():
+            return []
+
+        g61_folders = set()
+        try:
+            # Assuming first level of subdirectories are car folders
+            for car_folder in base_path.iterdir():
+                if car_folder.is_dir():
+                    for sub_folder in car_folder.iterdir():
+                        if sub_folder.is_dir() and sub_folder.name.startswith("Garage 61"):
+                            g61_folders.add(sub_folder.name)
+        except Exception as e:
+            logging.warning(f"Could not scan for Garage 61 folders: {e}")
+
+        return sorted(list(g61_folders))
+
     def start_download(self):
         """Initiates the download process in a background thread."""
-        self.set_ui_state(is_running=True)
-        self.stop_event.clear()
-        self.progress_label_var.set("Scanning for setups...")
-        self.progress_var.set(0)
-        self.progress_bar.config(mode='indeterminate')
-        self.progress_bar.start(10)
-        self.thread = threading.Thread(target=self.run_download_flow, daemon=True)
-        self.thread.start()
+        self._check_for_g61_and_start_flow(self.run_download_flow)
 
     def start_discord_login(self):
         """Starts the user-assisted Discord login flow."""
+        self._check_for_g61_and_start_flow(self.run_discord_login_flow)
+
+    def _check_for_g61_and_start_flow(self, target_flow):
+        """Scans for G61 folders and starts the specified download flow."""
+        download_path = self.download_path_var.get()
+        g61_folders = self.scan_for_garage61_folders(download_path)
+
+        garage61_folder_to_use = None
+        if g61_folders:
+            dialog = Garage61Dialog(self, g61_folders, icon_path=self.icon_path)
+            result = dialog.show()
+            
+            if result is Garage61Dialog._CANCELLED:
+                logging.info("Operation cancelled by user from Garage 61 dialog.")
+                return # Abort the download/login flow
+
+            garage61_folder_to_use = result
+
         self.set_ui_state(is_running=True)
         self.stop_event.clear()
-        self.thread = threading.Thread(target=self.run_discord_login_flow, daemon=True)
+        self.skip_event.clear()
+
+        # Common setup for both flows
+        if target_flow == self.run_download_flow:
+            self.progress_label_var.set("Scanning for setups...")
+            self.progress_var.set(0)
+            self.progress_bar.config(mode='indeterminate')
+            self.progress_bar.start(10)
+        
+        self.thread = threading.Thread(target=target_flow, args=(garage61_folder_to_use,), daemon=True)
         self.thread.start()
 
     def stop_download(self):
@@ -506,7 +615,13 @@ class DownloaderApp(tk.Tk):
             self.stop_button.config(state='disabled') # Prevent multiple clicks
             self.progress_label_var.set("Stopping...")
     
-    def _run_scraper(self, driver, setup_page, download_path):
+    def skip_setup(self):
+        """Sets an event to signal the download thread to skip the current setup."""
+        if self.thread and self.thread.is_alive():
+            logging.info("Skip request received. Moving to the next setup...")
+            self.skip_event.set()
+
+    def _run_scraper(self, driver, setup_page, download_path, garage61_folder: str | None = None):
         """Initializes and runs the SetupScraper, handling shared logic."""
         scraper = SetupScraper(
             session=driver,
@@ -514,7 +629,9 @@ class DownloaderApp(tk.Tk):
             delay=1.0,
             download_path=download_path,
             progress_queue=self.progress_queue,
-            stop_event=self.stop_event
+            stop_event=self.stop_event,
+            skip_event=self.skip_event,
+            garage61_folder=garage61_folder
         )
         
         logging.info("Scraping and downloading setup listings...")
@@ -527,7 +644,7 @@ class DownloaderApp(tk.Tk):
         else:
             logging.info(f"Process complete! {len(setups)} setups downloaded successfully.")
 
-    def run_download_flow(self):
+    def run_download_flow(self, garage61_folder: str | None = None):
         """Handles the core download workflow: auth, scraping, and cleanup."""
         try:
             email = self.email_var.get()
@@ -543,7 +660,7 @@ class DownloaderApp(tk.Tk):
 
             create_directories(Path(download_path))
 
-            logging.info("Starting TrackTitan setup downloader...")
+            logging.info("Starting Track Titan setup downloader...")
             self.auth_session = TrackTitanAuth(
                 email=email,
                 password=password,
@@ -552,14 +669,14 @@ class DownloaderApp(tk.Tk):
                 download_path=download_path
             )
         
-            logging.info("Authenticating with TrackTitan...")
+            logging.info("Authenticating with Track Titan...")
             driver = self.auth_session.authenticate()
             if not driver:
                 logging.error("Authentication failed! Check credentials and network.")
                 return
             
             logging.info("Authentication successful!")
-            self._run_scraper(driver, setup_page, download_path)
+            self._run_scraper(driver, setup_page, download_path, garage61_folder)
         
         except Exception as e:
             logging.error(f"An unexpected error occurred: {e}", exc_info=True)
@@ -570,7 +687,7 @@ class DownloaderApp(tk.Tk):
             self.after(0, self.set_ui_state, False)
             self.progress_queue.put({'reset': True})
 
-    def run_discord_login_flow(self):
+    def run_discord_login_flow(self, garage61_folder: str | None = None):
         """Handles the user-assisted Discord login, then scraping."""
         try:
             download_path = self.download_path_var.get()
@@ -610,7 +727,7 @@ class DownloaderApp(tk.Tk):
             self.progress_bar.config(mode='indeterminate')
             self.progress_bar.start(10)
             
-            self._run_scraper(driver, setup_page, download_path)
+            self._run_scraper(driver, setup_page, download_path, garage61_folder)
 
         except Exception as e:
             logging.error(f"An unexpected error occurred during Discord login flow: {e}", exc_info=True)
@@ -620,7 +737,31 @@ class DownloaderApp(tk.Tk):
             self.after(0, self.set_ui_state, False)
             self.progress_queue.put({'reset': True})
 
+    def _adjust_log_columns(self, event=None):
+        """Adjusts the 'Message' column width to fill available space."""
+        # Guard against firing during initial widget creation before it has a size.
+        if self.log_tree.winfo_width() <= 1:
+            return
+
+        total_width = self.log_tree.winfo_width()
+        
+        # Get the width of the other columns.
+        time_width = self.log_tree.column('Time', 'width')
+        level_width = self.log_tree.column('Level', 'width')
+        
+        # Buffer for scrollbar and internal padding.
+        scrollbar_buffer = 25
+        
+        # Calculate the remaining space for the 'Message' column.
+        new_message_width = total_width - time_width - level_width - scrollbar_buffer
+        
+        min_width = 200
+        if new_message_width < min_width:
+            new_message_width = min_width
+            
+        self.log_tree.column('Message', width=new_message_width)
+
 
 if __name__ == '__main__':
     app = DownloaderApp()
-    app.mainloop() 
+    app.mainloop()

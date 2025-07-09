@@ -59,7 +59,7 @@ if not exist .env (
 
 echo.
 echo =================================
-echo  Installation complete!
+echo      Installation complete!
 echo =================================
 echo.
 echo Next Steps:
@@ -67,4 +67,4 @@ echo 1. Open the '.env' file in a text editor and add your TrackTitan credential
 echo 2. Run the application by double-clicking 'tracktitan_downloader.py' or by running this command in your terminal:
 echo    python tracktitan_downloader.py
 echo.
-pause 
+pause
