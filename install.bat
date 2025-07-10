@@ -1,7 +1,7 @@
 @echo off
-REM TrackTitan Downloader Installation Script for Windows
+REM Track Titan Downloader Installation Script for Windows
 
-echo TrackTitan Downloader - Installation Script for Windows
+echo Track Titan Downloader - Installation Script for Windows
 echo ======================================================
 
 REM Check if Python is installed
@@ -43,7 +43,7 @@ if not exist .env (
         copy env.example .env
         echo.
         echo '.env' file created successfully.
-        echo [IMPORTANT] Please open the .env file and enter your TrackTitan credentials.
+        echo [IMPORTANT] Please open the .env file and enter your Track Titan credentials.
     ) else (
         echo.
         echo [ERROR] 'env.example' not found. Cannot create .env file.
@@ -63,7 +63,7 @@ echo      Installation complete!
 echo =================================
 echo.
 echo Next Steps:
-echo 1. Open the '.env' file in a text editor and add your TrackTitan credentials.
+echo 1. Open the '.env' file in a text editor and add your Track Titan credentials.
 echo 2. Run the application by double-clicking 'tracktitan_downloader.py' or by running this command in your terminal:
 echo    python tracktitan_downloader.py
 echo.

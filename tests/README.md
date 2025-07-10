@@ -22,7 +22,7 @@ This command will create isolated virtual environments for each Python version, 
 
 This test suite is organized by the module being tested. It also contains a `fixtures` directory.
 
--   **`fixtures/`**: This directory contains static data used as inputs for tests, such as the `setups_page.html` file, which simulates the TrackTitan setups page. This allows for testing parsing logic without making live web requests.
+-   **`fixtures/`**: This directory contains static data used as inputs for tests, such as the `setups_page.html` file, which simulates the Track Titan setups page. This allows for testing parsing logic without making live web requests.
 
 ### `tests/test_logic.py`
 
