@@ -520,7 +520,7 @@ class DownloaderApp(tk.Tk):
                     self.progress_bar.start(10)
                     if 'label' in progress_update:
                         self.progress_label_var.set(progress_update['label'])
-
+                
                 if progress_update.get('reset'):
                     self.progress_var.set(0)
                     self.progress_label_var.set("")
@@ -609,7 +609,7 @@ class DownloaderApp(tk.Tk):
                 # Defer UI updates to the main thread.
                 self.after(0, self.set_ui_state, False)
                 self.progress_queue.put({'reset': True})
-
+        
         self.thread = threading.Thread(target=thread_wrapper, daemon=True)
         self.thread.start()
 

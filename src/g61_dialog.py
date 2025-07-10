@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk
 import os
+from typing import Optional
 
 try:
     import sv_ttk
@@ -13,7 +14,7 @@ class Garage61Dialog(tk.Toplevel):
     """
     _CANCELLED = object()  # Sentinel value for cancellation
 
-    def __init__(self, parent, g61_folders, icon_path: str | None = None):
+    def __init__(self, parent, g61_folders, icon_path: Optional[str] = None):
         super().__init__(parent)
         self.transient(parent)
         self.title("Garage 61 Option")
