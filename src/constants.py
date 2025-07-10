@@ -1,7 +1,7 @@
 """
 Centralized constants for the application.
 This includes URLs, and selectors that are subject to change if the
-TrackTitan website is updated.
+Track Titan website is updated.
 """
 
 # --- URLs ---
