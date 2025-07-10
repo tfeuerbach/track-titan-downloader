@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 from selenium.common.exceptions import TimeoutException
 from . import constants
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,10 @@ class TrackTitanAuth:
     def _get_chrome_options(self, is_manual_login: bool = False) -> Options:
         """Configures and returns Chrome options with download preferences."""
         chrome_options = Options()
+
+        # Suppress console logs from Chrome/ChromeDriver
+        chrome_options.add_argument('--log-level=3')
+        chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
 
         # General browser settings
         if self.headless and not is_manual_login:
@@ -251,20 +256,29 @@ class TrackTitanAuth:
                 self.driver.quit()
             return None
 
-    def wait_for_successful_login(self, success_url_part: str) -> bool:
-        """Waits for the user to log in by monitoring the URL."""
-        if not self.driver:
-            return False
+    def wait_for_successful_login(self, success_url_part: str, stop_event: threading.Event) -> bool:
+        """Waits for the user to complete login, checking for a URL change."""
+        logger.info("Waiting for user to complete manual login in the browser...")
+        wait_time_seconds = 120  # 2 minutes
+        start_time = time.time()
+        
+        while time.time() - start_time < wait_time_seconds:
+            # --- Stop Event Check ---
+            if stop_event and stop_event.is_set():
+                logger.warning("Stop event received while waiting for manual login. Aborting.")
+                return False
+
+            try:
+                current_url = self.driver.current_url
+                if success_url_part in current_url:
+                    logger.info("Successful login detected by URL change.")
+                    time.sleep(2) # Allow page to fully load after redirect
+                    return True
+            except Exception as e:
+                logger.warning(f"Could not get current URL, browser might be closed. {e}")
+                return False
             
-        logger.info(f"Waiting for successful login (URL to contain '{success_url_part}')...")
-        try:
-            wait = WebDriverWait(self.driver, timeout=300) # 5 minute timeout
-            wait.until(EC.url_contains(success_url_part))
-            logger.info("Login successful: Detected URL change.")
-            return True
-        except TimeoutException:
-            logger.error("Timed out waiting for manual login.")
-            return False
-        except Exception as e:
-            logger.error(f"An error occurred while waiting for login: {e}")
-            return False
+            time.sleep(1) # Poll every second
+        
+        logger.error("Timed out waiting for successful login.")
+        return False

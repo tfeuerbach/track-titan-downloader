@@ -618,7 +618,7 @@ class DownloaderApp(tk.Tk):
     def stop_download(self):
         """Sets an event to signal the download thread to terminate."""
         if self.thread and self.thread.is_alive():
-            logging.warning("Stop request received. Finishing current file then stopping...")
+            logging.warning("Stop request received. Halting operation...")
             self.stop_event.set()
             self.stop_button.config(state='disabled') # Prevent multiple clicks
             self.progress_label_var.set("Stopping...")

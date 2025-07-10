@@ -18,8 +18,13 @@ import shutil
 from queue import Queue
 import threading
 from . import constants
+import requests
 
 logger = logging.getLogger(__name__)
+
+class StopRequested(Exception):
+    """Custom exception to signal that a stop was requested."""
+    pass
 
 class SetupInfo:
     """A data container for a single setup's metadata."""
@@ -55,6 +60,21 @@ class SetupScraper:
         self.skip_event = skip_event
         self.garage61_folder = garage61_folder
     
+    def _interruptible_sleep(self, duration: float):
+        """
+        Sleeps for a given duration in small increments, checking for the stop
+        event frequently. Raises StopRequested if the event is set.
+        """
+        if not self.stop_event:
+            time.sleep(duration)
+            return
+
+        end_time = time.time() + duration
+        while time.time() < end_time:
+            if self.stop_event.is_set():
+                raise StopRequested
+            time.sleep(0.1)  # Check every 100ms
+
     def _report_progress(self, value: Optional[int] = None, max_val: Optional[int] = None):
         """Sends progress updates to the main GUI thread."""
         if self.progress_queue:
@@ -98,12 +118,12 @@ class SetupScraper:
             first_inactive_seen = False
             inactive_header_xpath = constants.SCRAPER_SELECTORS['inactive_section_header']
             prev_inactive_count = 0
-            # Stop after this many extra inactive sections appear.
+            # Stop after this many extra inactive sections needed.
             extra_inactive_sections_needed = 2
 
             while True:
                 self.session.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                time.sleep(self.delay + 2)
+                self._interruptible_sleep(self.delay + 2)
                 
                 # Current inactive headers on the page
                 inactive_headers = self.session.find_elements(By.XPATH, inactive_header_xpath)
@@ -115,7 +135,7 @@ class SetupScraper:
 
                     # Give the UI a moment to finish rendering any late active setups.
                     logger.info("First inactive section header is visible. Waiting a short grace period to allow any remaining active setups to render …")
-                    time.sleep(self.delay + 1)  # Give the frontend JS a second to finish rendering
+                    self._interruptible_sleep(self.delay + 1)
 
                     # After the wait, decide whether to keep scrolling.
                     new_height_after_wait = self.session.execute_script("return document.body.scrollHeight")
@@ -148,6 +168,9 @@ class SetupScraper:
             setups = self._extract_and_process_setups()
             return setups
 
+        except StopRequested:
+            logger.warning("Stop event received during page scroll. Halting.")
+            return []
         except Exception as e:
             logger.error(f"Selenium scraping failed: {e}", exc_info=True)
             # Save page source on other exceptions
@@ -248,60 +271,66 @@ class SetupScraper:
         
         return setup_page_urls
     
-    def _trigger_download(self, setup_page_url: str) -> bool:
-        """Navigates to the setup page and clicks the necessary buttons to start the download."""
-        MAX_ATTEMPTS = 2
-        for attempt in range(MAX_ATTEMPTS):
-            if self.skip_event and self.skip_event.is_set():
-                logger.warning(f"Skipping download for {setup_page_url} due to user request.")
-                return False
+    def _download_and_organize_one_setup(self, setup_page_url: str) -> Optional[SetupInfo]:
+        """
+        Directly downloads a setup .zip file from its download link,
+        unpacks it, and organizes the files. This is more robust and
+        allows for cancellation.
+        """
+        try:
+            # Re-use the authenticated session from Selenium to make the request
+            cookies = self.session.get_cookies()
+            s = requests.Session()
+            for cookie in cookies:
+                s.cookies.set(cookie['name'], cookie['value'])
 
+            # The actual download link is predictable
+            download_url = setup_page_url.replace('/setups/', '/setups/download/')
+            
+            with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp_zip:
+                tmp_zip_path = Path(tmp_zip.name)
+
+            logger.info(f"Downloading from: {download_url}")
+            
             try:
-                if attempt > 0:
-                    logger.info(f"Retrying download for {setup_page_url} (Attempt {attempt + 1}/{MAX_ATTEMPTS})")
-                
-                self.session.get(setup_page_url)
-                wait = WebDriverWait(self.session, 10)
-                
-                download_button = wait.until(EC.element_to_be_clickable(
-                    (By.XPATH, constants.SCRAPER_SELECTORS['download_latest_button'])
-                ))
-                self.session.execute_script("arguments[0].click();", download_button)
-                
-                try:
-                    manual_download_wait = WebDriverWait(self.session, 10)
-                    manual_download_button = manual_download_wait.until(EC.element_to_be_clickable(
-                        (By.XPATH, constants.SCRAPER_SELECTORS['download_manually_button'])
-                    ))
-                    self.session.execute_script("arguments[0].click();", manual_download_button)
-                except (NoSuchElementException, TimeoutException):
-                    logger.debug("Did not find 'Download Manually' button, assuming direct download.")
-                    pass
-
-                # Check for a specific failure notification from the website.
-                try:
-                    error_notification_xpath = constants.SCRAPER_SELECTORS['download_error_notification']
-                    error_wait = WebDriverWait(self.session, 5) # Short wait, it appears fast.
-                    error_wait.until(EC.presence_of_element_located((By.XPATH, error_notification_xpath)))
+                # Use a try/finally to ensure the temp file is cleaned up on error/stop
+                with s.get(download_url, stream=True, timeout=30) as r:
+                    r.raise_for_status()
+                    total_size = int(r.headers.get('content-length', 0))
+                    chunk_size = 8192
                     
-                    if attempt < MAX_ATTEMPTS - 1:
-                        continue
-                    else:
-                        logger.error(f"Download failed for {setup_page_url} after {MAX_ATTEMPTS} attempts due to site error.")
-                        return False
-                except TimeoutException:
-                    return True
+                    with open(tmp_zip_path, 'wb') as f:
+                        for chunk in r.iter_content(chunk_size=chunk_size):
+                            # --- Stop Event Check ---
+                            if self.stop_event and self.stop_event.is_set():
+                                logger.warning(f"Stop event received. Aborting download for {setup_page_url}.")
+                                # The finally block will handle cleanup
+                                return None
+                            f.write(chunk)
+                
+                logger.info(f"Finished downloading to {tmp_zip_path}")
+                return self._organize_setup_files(tmp_zip_path, setup_page_url)
 
-            except Exception as e:
-                logger.error(f"Could not trigger download for {setup_page_url} on attempt {attempt + 1}: {e}")
-                if attempt < MAX_ATTEMPTS - 1:
-                    time.sleep(2) # Wait a moment before retrying
-                else:
-                    return False
-        return False
+            finally:
+                # If a stop was requested, or if any error occurred, the organized
+                # setup info will not have been returned. In that case, we must
+                # clean up the partially downloaded file.
+                if tmp_zip_path.exists():
+                    logger.debug(f"Cleaning up temporary file: {tmp_zip_path}")
+                    tmp_zip_path.unlink()
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to download setup from {setup_page_url}. Reason: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"An unexpected error occurred while handling download for {setup_page_url}: {e}", exc_info=True)
+            return None
 
     def _wait_for_new_zip_file(self, files_before: set, setup_page_url: str) -> Optional[Path]:
-        """Waits for a new .zip file to appear in the download directory."""
+        """
+        Waits for a new .zip file to appear in the download directory.
+        DEPRECATED: This click-based download is less reliable.
+        """
         download_dir = Path(self.download_path)
         try:
             end_time = time.time() + 60  # Wait 60 seconds
@@ -385,22 +414,3 @@ class SetupScraper:
             if zip_file and zip_file.exists():
                 logger.warning(f"Failed to organize {zip_file.name}. The zip file has been kept.")
             return None
-
-    def _download_and_organize_one_setup(self, setup_page_url: str) -> Optional[SetupInfo]:
-        """
-        Handles the download and file organization for a single setup.
-        """
-        download_dir = Path(self.download_path)
-        files_before = set(download_dir.glob('*.zip'))
-
-        # Step 1: Trigger the download in the browser.
-        if not self._trigger_download(setup_page_url):
-            return None
-
-        # Step 2: Wait for the new .zip file to appear.
-        latest_zip_file = self._wait_for_new_zip_file(files_before, setup_page_url)
-        if not latest_zip_file:
-            return None # Download timed out or was skipped.
-
-        # Step 3: Unzip and organize the files.
-        return self._organize_setup_files(latest_zip_file, setup_page_url)

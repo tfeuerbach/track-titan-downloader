@@ -1,10 +1,11 @@
 # Application Dependencies
 python-dotenv==1.0.1
-selenium==4.22.0
+selenium==4.21.0
 sv-ttk==2.5.5
 
 # Build & Test Dependencies
 pyinstaller==6.9.0
-pytest==8.3.2
-pytest-mock==3.14.0
-tox==4.16.0 
+pytest==8.2.2
+pytest-mock==3.12.0
+requests==2.32.3
+tox==4.15.1 

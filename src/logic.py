@@ -114,10 +114,16 @@ class DownloaderLogic:
             
             logging.info("Browser opened. Please complete the login process...")
             
-            is_logged_in = self.auth_session.wait_for_successful_login(success_url_part='/dashboard')
+            is_logged_in = self.auth_session.wait_for_successful_login(
+                success_url_part='/dashboard', 
+                stop_event=self.stop_event
+            )
             
             if not is_logged_in:
-                logging.error("Login was not completed successfully.")
+                if self.stop_event.is_set():
+                    logging.warning("Discord login cancelled by user.")
+                else:
+                    logging.error("Login was not completed successfully.")
                 return
 
             logging.info("Manual login successful! Starting scraper...")

@@ -10,6 +10,7 @@ import threading
 from src.scraper import SetupScraper, SetupInfo
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+import tempfile
 
 @pytest.fixture(scope="module")
 def browser():
@@ -72,7 +73,7 @@ def test_get_setup_listings_from_html(browser):
     assert "https://app.tracktitan.io/setups/active-setup-2" in found_urls
     assert "https://app.tracktitan.io/setups/active-setup-3" in found_urls
 
-    # Ensure paid and inactive links were NOT processed
+    # Ensure paid and inactive links NOT processed
     assert "https://app.tracktitan.io/setups/paid-setup-1" not in found_urls
     assert "https://app.tracktitan.io/setups/inactive-setup-1" not in found_urls
 
@@ -148,4 +149,69 @@ def test_organize_setup_files_with_garage61_folder(tmp_path: Path, create_test_z
         download_dir / "ferrari296gt3" / g61_folder_name / "daytonaroad" / "HYMO_IMSA_25S3_F296_Daytona_sR"
     )
     assert expected_dir.is_dir()
-    assert (expected_dir / "HYMO_IMSA_25S3_F296_Daytona_sR.sto").exists() 
+    assert (expected_dir / "HYMO_IMSA_25S3_F296_Daytona_sR.sto").exists()
+
+def test_download_and_organize_stop_event_cleanup(mocker):
+    """
+    Verifies that if the stop event is set during a download, the partially
+    downloaded temp file is cleaned up.
+    """
+    # --- Arrange ---
+    # Mock requests.get to simulate a download in chunks
+    mock_response = mocker.Mock()
+    # Simulate a file with 3 chunks
+    mock_response.iter_content.return_value = [b'chunk1', b'chunk2', b'chunk3']
+    mock_response.headers.get.return_value = '24' # 3 chunks * 8 bytes
+    
+    # This context manager will be returned by requests.get
+    mock_context_manager = mocker.Mock()
+    mock_context_manager.__enter__.return_value = mock_response
+    mock_context_manager.__exit__.return_value = None
+
+    # Patch requests.Session().get to return our mock
+    mock_session_get = mocker.patch('requests.Session.get', return_value=mock_context_manager)
+
+    # The stop event will be set by our mock download
+    stop_event = threading.Event()
+
+    scraper = SetupScraper(
+        session=mocker.Mock(), # Mock selenium session
+        setup_page="",
+        download_path="/fake/path",
+        progress_queue=Queue(),
+        stop_event=stop_event,
+    )
+    
+    # We need to find the temp file that gets created to assert it's deleted.
+    # We can patch NamedTemporaryFile to grab the path.
+    real_named_temporary_file = tempfile.NamedTemporaryFile
+    temp_file_path_holder = []
+    
+    def named_temporary_file_spy(*args, **kwargs):
+        # Create a real temp file so the code can write to it
+        f = real_named_temporary_file(*args, **kwargs)
+        temp_file_path_holder.append(Path(f.name))
+        return f
+    
+    mocker.patch('tempfile.NamedTemporaryFile', side_effect=named_temporary_file_spy)
+    
+    # Set the stop event after the first chunk is "downloaded"
+    original_write = Path.write_bytes
+    def write_and_set_stop(self, data):
+        original_write(self, data)
+        # Set the stop event after the first chunk, simulating a user click
+        if not stop_event.is_set():
+            stop_event.set()
+    
+    mocker.patch('pathlib.Path.write_bytes', side_effect=write_and_set_stop, autospec=True)
+
+    # --- Act ---
+    result = scraper._download_and_organize_one_setup("http://fake-url.com/setups/123")
+
+    # --- Assert ---
+    assert result is None, "The method should return None when stopped"
+    
+    # Check that the temp file was created and then deleted
+    assert len(temp_file_path_holder) == 1, "A temporary file should have been created"
+    temp_file_path = temp_file_path_holder[0]
+    assert not temp_file_path.exists(), "The temporary file should have been deleted after the stop event" 
