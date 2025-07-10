@@ -5,6 +5,7 @@ General utility functions.
 from pathlib import Path
 import re
 import logging
+from typing import List
 
 def create_directories(path: Path) -> None:
     """Ensures a directory path exists, creating it if necessary."""
@@ -19,7 +20,7 @@ def sanitize_filename(filename: str) -> str:
         filename = filename[:200]
     return filename
 
-def scan_for_garage61_folders(base_path_str: str) -> list[str]:
+def scan_for_garage61_folders(base_path_str: str) -> List[str]:
     """Scans for Garage 61 directories inside car folders."""
     base_path = Path(base_path_str)
     if not base_path.is_dir():

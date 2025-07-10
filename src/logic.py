@@ -7,6 +7,7 @@ import logging
 import os
 from pathlib import Path
 import threading
+from typing import Optional
 
 from .auth import TrackTitanAuth
 from .scraper import SetupScraper
@@ -25,7 +26,7 @@ class DownloaderLogic:
         self.progress_queue = progress_queue
         self.auth_session = None
 
-    def _run_scraper(self, driver, setup_page, download_path, garage61_folder: str | None = None):
+    def _run_scraper(self, driver, setup_page, download_path, garage61_folder: Optional[str] = None):
         """Initializes and runs the SetupScraper."""
         scraper = SetupScraper(
             session=driver,
@@ -48,7 +49,7 @@ class DownloaderLogic:
         else:
             logging.info(f"Process complete! {len(setups)} setups downloaded successfully.")
 
-    def run_download_flow(self, garage61_folder: str | None = None):
+    def run_download_flow(self, garage61_folder: Optional[str] = None):
         """Handles the standard email/password authentication and download workflow."""
         try:
             email = self.config.get('email')
@@ -86,7 +87,7 @@ class DownloaderLogic:
             if self.auth_session:
                 self.auth_session.close()
 
-    def run_discord_login_flow(self, garage61_folder: str | None = None):
+    def run_discord_login_flow(self, garage61_folder: Optional[str] = None):
         """Handles the user-assisted Discord login, then scraping."""
         try:
             download_path = self.config.get('download_path')
