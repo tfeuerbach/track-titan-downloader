@@ -1,20 +1,28 @@
-# TrackTitan Downloader - Test Suite
+# Track Titan Downloader - Test Suite
 
-This directory contains the automated test suite for the TrackTitan Downloader application.
+This directory contains the automated test suite for the Track Titan Downloader application.
 
 ## Running the Tests
 
-To execute the test suite, install the required dependencies and run `pytest` from the project's root directory.
+This project uses `tox` to run the test suite against multiple Python versions (3.8 and 3.11), which mirrors the setup used in the Continuous Integration (CI) pipeline. This is the recommended way to run tests to ensure compatibility.
 
-```bash
-# Install dependencies
-pip install -r requirements.txt
+You must have both Python 3.8 and Python 3.11 installed and available in your system's PATH for `tox` to run successfully.
 
-# Run all tests with verbose output
-pytest -v
-```
+1.  **Install `tox`:**
+    ```bash
+    pip install tox
+    ```
+2.  **Run the Test Suite:**
+    ```bash
+    tox
+    ```
+This command will create isolated virtual environments for each Python version, install the necessary dependencies, and run `pytest`.
 
 ## Test Suite Breakdown
+
+This test suite is organized by the module being tested. It also contains a `fixtures` directory.
+
+-   **`fixtures/`**: This directory contains static data used as inputs for tests, such as the `setups_page.html` file, which simulates the TrackTitan setups page. This allows for testing parsing logic without making live web requests.
 
 ### `tests/test_logic.py`
 
