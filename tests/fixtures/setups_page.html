@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Test Setups Page</title>
+</head>
+<body>
+
+    <h1>Simulated TrackTitan Setups Page</h1>
+
+    <!-- An Active section that should be scraped -->
+    <div>
+        <h2>Week 1 <span class="text-green-500">(Active)</span></h2>
+    </div>
+    <div>
+        <!-- These links should be found -->
+        <a href="https://app.tracktitan.io/setups/active-setup-1"></a>
+        <a href="https://app.tracktitan.io/setups/active-setup-2"></a>
+    </div>
+
+    <!-- A Paid Bundle section that should be skipped -->
+    <div>
+        <h2>HYMO iRacing Bundles <span class="text-green-500">(Active)</span></h2>
+    </div>
+    <div>
+        <!-- This link should be skipped -->
+        <a href="https://app.tracktitan.io/setups/paid-setup-1"></a>
+    </div>
+    
+    <!-- Another Active section that should be scraped -->
+    <div>
+        <h2>Week 2 <span class="text-green-500">(Active)</span></h2>
+    </div>
+    <div>
+        <!-- This link should be found -->
+        <a href="https://app.tracktitan.io/setups/active-setup-3"></a>
+    </div>
+
+    <!-- An Inactive section that should be ignored -->
+    <div>
+        <h2 class="text-2xl">Week 3 (Inactive)</h2>
+    </div>
+    <div>
+        <!-- This link should NOT be found -->
+        <a href="https://app.tracktitan.io/setups/inactive-setup-1"></a>
+    </div>
+
+</body>
+</html> 

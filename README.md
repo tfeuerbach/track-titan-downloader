@@ -10,37 +10,23 @@ TrackTitan doesn't provide any sort of API so this tool leverages Selenium to mo
 
 In accordance with the [TrackTitan Terms and Conditions](https://www.tracktitan.io/terms-and-conditions), you are explicitly prohibited from sharing, distributing, or using for commercial purposes any car setups downloaded from their service. This tool is intended solely for downloading all the setups up front/in bulk for a week.
 
-
 ## Features
 
 - Simple GUI for easy operation.
 - Login with your TrackTitan credentials or via Discord.
 
-## Installation & Usage
+---
 
-This application is a GUI tool and can be run from source or as an executible on both Windows and Linux/macOS.
+## Usage
 
-### Windows
+This section provides instructions for the recommended method for most users.
 
-1.  **Run the Installer:** Double-click on `install.bat`. This script will automatically install the necessary Python packages and create a `.env` file for your configuration.
-2.  **Edit Configuration:** Open the new `.env` file in a text editor and enter your TrackTitan email and password.
-3.  **Run the App:** Double-click `tracktitan_downloader.py` to start the application.
+### Installation & Usage
 
-### Linux / MacOS
+1.  **Download the Executable:** Go to the [**project's Releases page**](https://github.com/tfeuerbach/track-titan-downloader/releases) and download the latest `TrackTitan-Downloader.exe` file.
+2.  **Run the App:** Double-click `TrackTitan-Downloader.exe` to start the application.
 
-1.  **Run the Installer:** Open a terminal in the project directory and run the command:
-```bash
-    bash install.sh
-```
-This will install dependencies and create your `.env` configuration file.
-
-2.  **Edit Configuration:** Open the new `.env` file in a text editor and enter your TrackTitan credentials.
-3.  **Run the App:** In your terminal, run the command:
-```bash
-    python3 tracktitan_downloader.py
-```
-
-## File Organization
+### File Organization
 
 Downloads are organized into your chosen folder by car, then track, and finally by the setup package name. For example, if you choose `Documents/iRacing/setups` as your download folder, setups will be placed like this:
 ```
@@ -52,7 +38,45 @@ Documents/iRacing/setups/
             └── setup_file_2.rpy
 ```
 
-## Notes
+### Notes
 
 - This tool scrapes the TrackTitan website. Changes to the website's structure may break the tool.
 - The browser window can be shown (by unchecking the box) to help debug login issues.
+
+---
+
+## For Developers & Contributors
+
+These instructions are for developers who want to run the application from the source code or contribute to the project.
+
+### 1. Setup
+
+**A. Clone the Repository**
+```bash
+git clone https://github.com/tfeuerbach/track-titan-downloader.git
+cd track-titan-downloader
+```
+
+**B. Install Dependencies**
+
+-   **On Windows:** Double-click `install.bat`. This script will install Python packages and create a `.env` file from the `env.example` template.
+-   **On Linux / macOS:** Open a terminal and run `bash install.sh`.
+
+After running the installer, open the new `.env` file and enter your TrackTitan credentials.
+
+### 2. Run the Application
+```bash
+python tracktitan_downloader.py
+```
+
+### 3. Running Tests
+This project uses `tox` to run tests against multiple Python versions, mirroring the CI setup. To run the tests locally, you must have Python 3.8 and 3.11 installed.
+
+1.  **Install `tox`:**
+    ```bash
+    pip install tox
+    ```
+2.  **Run Tests:**
+    ```bash
+    tox
+    ```
