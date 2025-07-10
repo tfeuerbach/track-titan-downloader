@@ -14,6 +14,7 @@ from queue import Queue, Empty
 import time
 import webbrowser
 from tkinter import font as tkfont
+from typing import Optional
 
 # Optional: python-dotenv for .env file support
 try:
@@ -120,7 +121,7 @@ class DownloaderApp(tk.Tk):
         self._is_resizing = False
         # Accumulate log records so we can insert them in batches for better performance
         self._pending_log_records = []
-        self._garage61_folder_to_use = None
+        self._garage61_folder_to_use: Optional[str] = None
         
         # --- UI Styling ---
         self.apply_styles()
@@ -586,7 +587,7 @@ class DownloaderApp(tk.Tk):
 
         self._start_thread(target_flow, garage61_folder_to_use)
 
-    def _start_thread(self, target_method, garage61_folder: str | None):
+    def _start_thread(self, target_method, garage61_folder: Optional[str]):
         """Creates a thread to run a method from the DownloaderLogic class."""
         
         def thread_wrapper():
@@ -626,14 +627,14 @@ class DownloaderApp(tk.Tk):
             logging.info("Skip request received. Moving to the next setup...")
             self.skip_event.set()
 
-    def run_download_flow(self, garage61_folder: str | None = None):
+    def run_download_flow(self, garage61_folder: Optional[str] = None):
         """Handles the core download workflow: auth, scraping, and cleanup."""
         self.progress_label_var.set("Scanning for setups...")
         self.progress_bar.config(mode='indeterminate')
         self.progress_bar.start(10)
         self._start_thread(DownloaderLogic.run_download_flow, garage61_folder)
 
-    def run_discord_login_flow(self, garage61_folder: str | None = None):
+    def run_discord_login_flow(self, garage61_folder: Optional[str] = None):
         """Handles the user-assisted Discord login, then scraping."""
         self._start_thread(DownloaderLogic.run_discord_login_flow, garage61_folder)
 
