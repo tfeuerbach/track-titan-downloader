@@ -559,11 +559,13 @@ class DownloaderApp(tk.Tk):
 
     def start_download(self):
         """Initiates the download process in a background thread."""
-        self._check_for_g61_and_start_flow(self.run_download_flow)
+        self.progress_label_var.set("Scanning for setups...")
+        self.progress_queue.put({'indeterminate': True, 'label': "Scanning for setups..."})
+        self._check_for_g61_and_start_flow(DownloaderLogic.run_download_flow)
 
     def start_discord_login(self):
         """Starts the user-assisted Discord login flow."""
-        self._check_for_g61_and_start_flow(self.run_discord_login_flow)
+        self._check_for_g61_and_start_flow(DownloaderLogic.run_discord_login_flow)
 
     def _check_for_g61_and_start_flow(self, target_flow):
         """Scans for G61 folders and starts the specified download flow."""
@@ -626,17 +628,6 @@ class DownloaderApp(tk.Tk):
         if self.thread and self.thread.is_alive():
             logging.info("Skip request received. Moving to the next setup...")
             self.skip_event.set()
-
-    def run_download_flow(self, garage61_folder: Optional[str] = None):
-        """Handles the core download workflow: auth, scraping, and cleanup."""
-        self.progress_label_var.set("Scanning for setups...")
-        self.progress_bar.config(mode='indeterminate')
-        self.progress_bar.start(10)
-        self._start_thread(DownloaderLogic.run_download_flow, garage61_folder)
-
-    def run_discord_login_flow(self, garage61_folder: Optional[str] = None):
-        """Handles the user-assisted Discord login, then scraping."""
-        self._start_thread(DownloaderLogic.run_discord_login_flow, garage61_folder)
 
     def _adjust_log_columns(self, event=None):
         """Adjusts the 'Message' column width to fill available space."""
