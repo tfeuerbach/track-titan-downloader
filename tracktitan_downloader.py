@@ -29,9 +29,10 @@ except ImportError:
 
 from src.auth import TrackTitanAuth
 from src.scraper import SetupScraper
-from src.utils import create_directories
+from src.utils import create_directories, scan_for_garage61_folders
 from src.__version__ import __version__ as APP_VERSION
 from src.g61_dialog import Garage61Dialog
+from src.logic import DownloaderLogic
 
 def resource_path(relative_path):
     """ Get absolute path to resource, works for dev and for PyInstaller """
@@ -101,7 +102,6 @@ class DownloaderApp(tk.Tk):
             logging.warning("Could not load discord_logo.png. Button will be text-only.")
 
         self.thread = None
-        self.auth_session = None
         self.stop_event = threading.Event()
         self.skip_event = threading.Event()
         self.progress_max = 0
@@ -514,6 +514,12 @@ class DownloaderApp(tk.Tk):
                         else:
                             self.progress_label_var.set(f"{current_val}/{self.progress_max} ({percent:.0f}%)")
                 
+                if progress_update.get('indeterminate'):
+                    self.progress_bar.config(mode='indeterminate')
+                    self.progress_bar.start(10)
+                    if 'label' in progress_update:
+                        self.progress_label_var.set(progress_update['label'])
+
                 if progress_update.get('reset'):
                     self.progress_var.set(0)
                     self.progress_label_var.set("")
@@ -550,25 +556,6 @@ class DownloaderApp(tk.Tk):
             self.progress_bar.stop()
             self.progress_bar.config(mode='determinate')
 
-    def scan_for_garage61_folders(self, base_path_str: str) -> list[str]:
-        """Scans for Garage 61 directories inside car folders."""
-        base_path = Path(base_path_str)
-        if not base_path.is_dir():
-            return []
-
-        g61_folders = set()
-        try:
-            # Assuming first level of subdirectories are car folders
-            for car_folder in base_path.iterdir():
-                if car_folder.is_dir():
-                    for sub_folder in car_folder.iterdir():
-                        if sub_folder.is_dir() and sub_folder.name.startswith("Garage 61"):
-                            g61_folders.add(sub_folder.name)
-        except Exception as e:
-            logging.warning(f"Could not scan for Garage 61 folders: {e}")
-
-        return sorted(list(g61_folders))
-
     def start_download(self):
         """Initiates the download process in a background thread."""
         self._check_for_g61_and_start_flow(self.run_download_flow)
@@ -580,7 +567,7 @@ class DownloaderApp(tk.Tk):
     def _check_for_g61_and_start_flow(self, target_flow):
         """Scans for G61 folders and starts the specified download flow."""
         download_path = self.download_path_var.get()
-        g61_folders = self.scan_for_garage61_folders(download_path)
+        g61_folders = scan_for_garage61_folders(download_path)
 
         garage61_folder_to_use = None
         if g61_folders:
@@ -597,14 +584,32 @@ class DownloaderApp(tk.Tk):
         self.stop_event.clear()
         self.skip_event.clear()
 
-        # Common setup for both flows
-        if target_flow == self.run_download_flow:
-            self.progress_label_var.set("Scanning for setups...")
-            self.progress_var.set(0)
-            self.progress_bar.config(mode='indeterminate')
-            self.progress_bar.start(10)
+        self._start_thread(target_flow, garage61_folder_to_use)
+
+    def _start_thread(self, target_method, garage61_folder: str | None):
+        """Creates a thread to run a method from the DownloaderLogic class."""
         
-        self.thread = threading.Thread(target=target_flow, args=(garage61_folder_to_use,), daemon=True)
+        def thread_wrapper():
+            """The actual function that runs in the new thread."""
+            try:
+                config = {
+                    'email': self.email_var.get(),
+                    'password': self.password_var.get(),
+                    'download_path': self.download_path_var.get(),
+                    'headless': self.headless_var.get()
+                }
+                logic_instance = DownloaderLogic(config, self.stop_event, self.skip_event, self.progress_queue)
+                
+                target_method(logic_instance, garage61_folder=garage61_folder)
+
+            except Exception as e:
+                logging.error(f"An unexpected error occurred in the worker thread: {e}", exc_info=True)
+            finally:
+                # Defer UI updates to the main thread.
+                self.after(0, self.set_ui_state, False)
+                self.progress_queue.put({'reset': True})
+
+        self.thread = threading.Thread(target=thread_wrapper, daemon=True)
         self.thread.start()
 
     def stop_download(self):
@@ -621,121 +626,16 @@ class DownloaderApp(tk.Tk):
             logging.info("Skip request received. Moving to the next setup...")
             self.skip_event.set()
 
-    def _run_scraper(self, driver, setup_page, download_path, garage61_folder: str | None = None):
-        """Initializes and runs the SetupScraper, handling shared logic."""
-        scraper = SetupScraper(
-            session=driver,
-            setup_page=setup_page,
-            delay=1.0,
-            download_path=download_path,
-            progress_queue=self.progress_queue,
-            stop_event=self.stop_event,
-            skip_event=self.skip_event,
-            garage61_folder=garage61_folder
-        )
-        
-        logging.info("Scraping and downloading setup listings...")
-        setups = scraper.get_setup_listings()
-        
-        if self.stop_event.is_set():
-            logging.warning("Download process stopped by user.")
-        elif not setups:
-            logging.warning("No new active setups found!")
-        else:
-            logging.info(f"Process complete! {len(setups)} setups downloaded successfully.")
-
     def run_download_flow(self, garage61_folder: str | None = None):
         """Handles the core download workflow: auth, scraping, and cleanup."""
-        try:
-            email = self.email_var.get()
-            password = self.password_var.get()
-            download_path = self.download_path_var.get()
-            
-            if not all([email, password, download_path]):
-                logging.error("Email, password, and download folder cannot be empty.")
-                return
-
-            setup_page = os.getenv('TRACK_TITAN_SETUP_PAGE', "https://app.tracktitan.io/setups")
-            login_url = os.getenv('TRACK_TITAN_LOGIN_URL', "https://app.tracktitan.io/login")
-
-            create_directories(Path(download_path))
-
-            logging.info("Starting Track Titan setup downloader...")
-            self.auth_session = TrackTitanAuth(
-                email=email,
-                password=password,
-                login_url=login_url,
-                headless=self.headless_var.get(),
-                download_path=download_path
-            )
-        
-            logging.info("Authenticating with Track Titan...")
-            driver = self.auth_session.authenticate()
-            if not driver:
-                logging.error("Authentication failed! Check credentials and network.")
-                return
-            
-            logging.info("Authentication successful!")
-            self._run_scraper(driver, setup_page, download_path, garage61_folder)
-        
-        except Exception as e:
-            logging.error(f"An unexpected error occurred: {e}", exc_info=True)
-        finally:
-            if self.auth_session:
-                self.auth_session.close()
-            # Defer UI updates to the main thread.
-            self.after(0, self.set_ui_state, False)
-            self.progress_queue.put({'reset': True})
+        self.progress_label_var.set("Scanning for setups...")
+        self.progress_bar.config(mode='indeterminate')
+        self.progress_bar.start(10)
+        self._start_thread(DownloaderLogic.run_download_flow, garage61_folder)
 
     def run_discord_login_flow(self, garage61_folder: str | None = None):
         """Handles the user-assisted Discord login, then scraping."""
-        try:
-            download_path = self.download_path_var.get()
-            if not download_path:
-                logging.error("Download folder cannot be empty.")
-                return
-
-            setup_page = os.getenv('TRACK_TITAN_SETUP_PAGE', "https://app.tracktitan.io/setups")
-            login_url = os.getenv('TRACK_TITAN_LOGIN_URL', "https://app.tracktitan.io/login")
-
-            create_directories(Path(download_path))
-
-            logging.info("Initializing browser for manual Discord login...")
-            self.auth_session = TrackTitanAuth(
-                email="", password="",
-                login_url=login_url,
-                download_path=download_path
-            )
-
-            driver = self.auth_session.init_browser_for_manual_login()
-            if not driver:
-                logging.error("Failed to open browser for manual login.")
-                return
-            
-            logging.info("Browser opened. Please complete the login process...")
-            
-            is_logged_in = self.auth_session.wait_for_successful_login(success_url_part='/dashboard')
-            
-            if not is_logged_in:
-                logging.error("Login was not completed successfully.")
-                return
-
-            logging.info("Manual login successful! Starting scraper...")
-            # Switch to indeterminate progress bar for scraping phase
-            self.progress_label_var.set("Scanning for setups...")
-            self.progress_var.set(0)
-            self.progress_bar.config(mode='indeterminate')
-            self.progress_bar.start(10)
-            
-            self._run_scraper(driver, setup_page, download_path, garage61_folder)
-
-        except Exception as e:
-            logging.error(f"An unexpected error occurred during Discord login flow: {e}", exc_info=True)
-        finally:
-            if self.auth_session:
-                self.auth_session.close()
-            self.after(0, self.set_ui_state, False)
-            self.progress_queue.put({'reset': True})
+        self._start_thread(DownloaderLogic.run_discord_login_flow, garage61_folder)
 
     def _adjust_log_columns(self, event=None):
         """Adjusts the 'Message' column width to fill available space."""

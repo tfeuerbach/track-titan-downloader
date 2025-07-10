@@ -14,6 +14,7 @@ from selenium.webdriver.chrome.options import Options
 import os
 from pathlib import Path
 from selenium.common.exceptions import TimeoutException
+from . import constants
 
 logger = logging.getLogger(__name__)
 
@@ -100,12 +101,7 @@ class TrackTitanAuth:
             while time.time() < end_time and not popup_closed:
                 try:
                     # Precise XPath for the SVG button in a modal, plus general fallbacks.
-                    close_button_xpath = (
-                        "//div[contains(@class, 'Modal_ModalContent')]/button[.//*[local-name()='svg']] | "
-                        "//button[@aria-label='Close' or @aria-label='close'] | "
-                        "//button[normalize-space()='X' or normalize-space()='×'] | "
-                        "//button[contains(., 'Accept') or contains(., 'Agree') or contains(., 'Dismiss') or contains(., 'Got it')]"
-                    )
+                    close_button_xpath = constants.AUTH_SELECTORS['popup_close_button']
 
                     # Use a short wait time within the loop
                     close_buttons = WebDriverWait(self.driver, 0.5).until(
@@ -133,7 +129,7 @@ class TrackTitanAuth:
             
             wait = WebDriverWait(self.driver, 10)
             
-            email_selectors = ['input[type="email"]', 'input[name="email"]', '#email']
+            email_selectors = constants.AUTH_SELECTORS['email_fields']
             email_field = None
             for selector in email_selectors:
                 try:
@@ -148,7 +144,7 @@ class TrackTitanAuth:
             email_field.clear()
             email_field.send_keys(self.email)
             
-            password_selectors = ['input[type="password"]', 'input[name="password"]', '#password']
+            password_selectors = constants.AUTH_SELECTORS['password_fields']
             password_field = None
             for selector in password_selectors:
                 try:
@@ -166,18 +162,7 @@ class TrackTitanAuth:
             login_button = None
             
             # Prioritize more specific, reliable selectors first.
-            login_selectors = {
-                "css": [
-                    'button[type="submit"]',
-                    '.login-button',
-                    '#login-button'
-                ],
-                "xpath": [
-                    "//button[contains(., 'Login')]",
-                    "//button[contains(., 'Sign In')]",
-                    "//input[@type='submit']"
-                ]
-            }
+            login_selectors = constants.AUTH_SELECTORS['login_buttons']
             
             for selector_type, selectors in login_selectors.items():
                 for selector in selectors:
