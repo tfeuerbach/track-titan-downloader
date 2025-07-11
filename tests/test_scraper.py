@@ -12,6 +12,7 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 import tempfile
+import requests
 
 @pytest.fixture(scope="module")
 def browser():
@@ -172,56 +173,75 @@ def test_download_and_organize_stop_event_cleanup(mocker):
     # Simulate a file with 3 chunks
     mock_response.iter_content.return_value = [b'chunk1', b'chunk2', b'chunk3']
     mock_response.headers.get.return_value = '24' # 3 chunks * 8 bytes
-    
+
     # This context manager will be returned by requests.get
-    mock_context_manager = mocker.Mock()
-    mock_context_manager.__enter__.return_value = mock_response
-    mock_context_manager.__exit__.return_value = None
+    mock_get = mocker.patch('src.scraper.requests.Session.get')
+    mock_get.return_value.__enter__.return_value = mock_response
 
-    # Patch requests.Session().get to return our mock
-    mock_session_get = mocker.patch('requests.Session.get', return_value=mock_context_manager)
+    # Mock Path and its methods to verify cleanup
+    mock_path_instance = mocker.MagicMock(spec=Path)
+    mock_path_instance.exists.return_value = True
+    mocker.patch('src.scraper.tempfile.NamedTemporaryFile', return_value=mocker.MagicMock(__enter__=mocker.MagicMock(return_value=mocker.MagicMock(name='temp_file'))))
+    mocker.patch('src.scraper.Path', return_value=mock_path_instance)
 
-    # The stop event will be set by our mock download
+    # Mock open to simulate writing to the temp file, and set the stop event
+    # after the first write call.
     stop_event = threading.Event()
+    mock_open = mocker.patch('src.scraper.open', mocker.mock_open())
+    
+    original_write = mock_open.return_value.write
+    def write_and_set_stop(*args, **kwargs):
+        original_write(*args, **kwargs)
+        if not stop_event.is_set():
+            stop_event.set()
+    mock_open.return_value.write.side_effect = write_and_set_stop
+
+    mock_session = mocker.Mock()
+    mock_session.get_cookies.return_value = []
 
     scraper = SetupScraper(
-        session=mocker.Mock(), # Mock selenium session
+        session=mock_session, # Use configured mock
         setup_page="",
         download_path="/fake/path",
         progress_queue=Queue(),
         stop_event=stop_event,
     )
     
-    # We need to find the temp file that gets created to assert it's deleted.
-    # We can patch NamedTemporaryFile to grab the path.
-    real_named_temporary_file = tempfile.NamedTemporaryFile
-    temp_file_path_holder = []
-    
-    def named_temporary_file_spy(*args, **kwargs):
-        # Create a real temp file so the code can write to it
-        f = real_named_temporary_file(*args, **kwargs)
-        temp_file_path_holder.append(Path(f.name))
-        return f
-    
-    mocker.patch('tempfile.NamedTemporaryFile', side_effect=named_temporary_file_spy)
-    
-    # Set the stop event after the first chunk is "downloaded"
-    original_write = Path.write_bytes
-    def write_and_set_stop(self, data):
-        original_write(self, data)
-        # Set the stop event after the first chunk, simulating a user click
-        if not stop_event.is_set():
-            stop_event.set()
-    
-    mocker.patch('pathlib.Path.write_bytes', side_effect=write_and_set_stop, autospec=True)
-
     # --- Act ---
-    result = scraper._download_and_organize_one_setup("http://fake-url.com/setups/123")
+    result = scraper._download_and_organize_one_setup('http://test.com/setups/123')
 
     # --- Assert ---
-    assert result is None, "The method should return None when stopped"
+    assert result is None
+    mock_path_instance.unlink.assert_called_once()
+    # Verify that requests.get was called
+    mock_get.assert_called_once()
     
-    # Check that the temp file was created and then deleted
-    assert len(temp_file_path_holder) == 1, "A temporary file should have been created"
-    temp_file_path = temp_file_path_holder[0]
-    assert not temp_file_path.exists(), "The temporary file should have been deleted after the stop event" 
+def test_download_and_organize_network_error(mocker):
+    """
+    Verifies that if a network error occurs during a download, the partially
+    downloaded temp file is cleaned up.
+    """
+    # --- Arrange ---
+    mock_session_class = mocker.patch('src.scraper.requests.Session')
+    mock_session_instance = mock_session_class.return_value
+    mock_session_instance.get.side_effect = requests.exceptions.RequestException("Network Error")
+
+    mock_session = mocker.Mock()
+    mock_session.get_cookies.return_value = []
+
+    scraper = SetupScraper(session=mock_session, setup_page='dummy_url', stop_event=threading.Event())
+
+    # Mock Path and its methods to verify cleanup
+    mock_path_instance = mocker.MagicMock(spec=Path)
+    mock_path_instance.exists.return_value = True
+    mocker.patch('src.scraper.Path', return_value=mock_path_instance)
+    
+    mocker.patch('src.scraper.tempfile.NamedTemporaryFile', return_value=mocker.MagicMock(__enter__=mocker.MagicMock(return_value=mocker.MagicMock(name='temp_file'))))
+
+    # --- Act ---
+    result = scraper._download_and_organize_one_setup('http://test.com/setups/123')
+
+    # --- Assert ---
+    assert result is None
+    # Verify unlink is called if the temp file was created before the network error
+    mock_path_instance.unlink.assert_called_once()

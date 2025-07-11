@@ -2,9 +2,11 @@
 Tests for the main application logic.
 """
 import pytest
+from unittest.mock import MagicMock, ANY
 from queue import Queue
 import threading
 from src.logic import DownloaderLogic
+from src.auth import TrackTitanAuth
 
 # A dummy config that can be used for tests
 @pytest.fixture
@@ -145,7 +147,10 @@ def test_run_discord_login_flow_success(test_config, mock_dependencies, mocker):
     mock_dependencies['auth_instance'].init_browser_for_manual_login.assert_called_once()
     
     # Verify that the app waited for the user to log in
-    mock_dependencies['auth_instance'].wait_for_successful_login.assert_called_once_with(success_url_part='/dashboard')
+    mock_dependencies['auth_instance'].wait_for_successful_login.assert_called_once_with(
+        success_url_part='/dashboard',
+        stop_event=ANY
+    )
     
     # Verify that the scraper was started
     mock_dependencies['scraper_class'].assert_called_once()
