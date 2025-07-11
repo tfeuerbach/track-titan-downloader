@@ -10,16 +10,26 @@ import threading
 from src.scraper import SetupScraper, SetupInfo
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 import tempfile
 
 @pytest.fixture(scope="module")
 def browser():
     """Provides a single, reusable headless Chrome browser for the test module."""
     chrome_options = Options()
-    chrome_options.add_argument('--headless')
+    chrome_options.add_argument("--headless=new")
     chrome_options.add_argument('--no-sandbox')
     chrome_options.add_argument('--disable-dev-shm-usage')
-    driver = webdriver.Chrome(options=chrome_options)
+
+    # Add the same log suppression options used in the main app
+    chrome_options.add_argument('--log-level=3')
+    chrome_options.add_experimental_option('excludeSwitches', ['enable-logging', 'enable-automation'])
+
+    # Service to silence the chromedriver process itself
+    service_args = ['--log-level=OFF']
+    service = Service(service_args=service_args)
+    
+    driver = webdriver.Chrome(service=service, options=chrome_options)
     yield driver
     driver.quit()
 
@@ -58,7 +68,7 @@ def test_get_setup_listings_from_html(browser):
 
     scraper = SetupScraper(
         session=browser,
-        setup_page="", # Not used, since we navigate directly
+        setup_page="", # Not used
         download_path="",
         progress_queue=Queue(),
         stop_event=threading.Event()

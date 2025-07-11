@@ -362,6 +362,7 @@ class DownloaderApp(tk.Tk):
         log_frame = ttk.LabelFrame(paned_window, text="LOG", padding="20")
         paned_window.add(log_frame, weight=1) # Add to paned window as the bottom, resizable pane
         log_frame.rowconfigure(0, weight=1)
+        log_frame.rowconfigure(1, weight=0) # For detail view
         log_frame.columnconfigure(0, weight=1)
 
         self.log_tree = ttk.Treeview(log_frame, columns=('Time', 'Level', 'Message'), show='headings')
@@ -380,6 +381,29 @@ class DownloaderApp(tk.Tk):
 
         # Adjust the 'Message' column width when the widget is resized.
         self.log_tree.bind('<Configure>', self._adjust_log_columns)
+
+        # Show log detail on selection
+        self.log_detail_var = tk.StringVar()
+        self.log_tree.bind('<<TreeviewSelect>>', self.show_log_detail)
+
+        # Right-click context menu for copying
+        self.log_context_menu = tk.Menu(self.log_tree, tearoff=0)
+        self.log_context_menu.add_command(label="Copy Message", command=self.copy_log_message)
+        self.log_context_menu.add_command(label="Copy Full Row", command=self.copy_log_row)
+        self.log_tree.bind("<Button-3>", self.show_log_context_menu)
+
+        # Detail view for long messages that wrap
+        detail_label = ttk.Label(
+            log_frame,
+            textvariable=self.log_detail_var,
+            wraplength=500, # Initial value
+            justify=tk.LEFT,
+            anchor='nw',
+            style="Disclaimer.TLabel"
+        )
+        detail_label.grid(row=1, column=0, columnspan=2, sticky='nsew', pady=(10, 0))
+        # Dynamically adjust wraplength when the window resizes
+        detail_label.bind('<Configure>', lambda e: e.widget.config(wraplength=e.widget.winfo_width()))
 
         # Tags for coloring
         self.log_tree.tag_configure('INFO', foreground=self.TEXT_COLOR)
@@ -426,6 +450,58 @@ class DownloaderApp(tk.Tk):
         # Back button
         back_button = ttk.Button(center_frame, text="< Back to Downloader", command=lambda: self.show_page(self.downloader_page))
         back_button.pack(pady=20)
+
+    def show_log_detail(self, event=None):
+        """Displays the full message of the selected log item in the detail view."""
+        self.log_detail_var.set("") # Clear previous
+        selected_item = self.log_tree.selection()
+        if not selected_item:
+            return
+        
+        item = self.log_tree.item(selected_item[0])
+        if item and item['values'] and len(item['values']) > 2:
+            # Message is the 3rd value, strip leading/trailing whitespace
+            message = item['values'][2].strip()
+            self.log_detail_var.set(message)
+
+    def show_log_context_menu(self, event):
+        """Shows the context menu on right-click in the log tree."""
+        iid = self.log_tree.identify_row(event.y)
+        if iid:
+            # Select the row under the mouse
+            self.log_tree.selection_set(iid)
+            # Post the menu
+            self.log_context_menu.post(event.x_root, event.y_root)
+
+    def copy_log_message(self):
+        """Copies the message of the selected log item to the clipboard."""
+        selected_item = self.log_tree.selection()
+        if not selected_item:
+            return
+        
+        item = self.log_tree.item(selected_item[0])
+        if item and item['values'] and len(item['values']) > 2:
+            # Message is the 3rd value
+            message = item['values'][2].strip()
+            self.clipboard_clear()
+            self.clipboard_append(message)
+
+    def copy_log_row(self):
+        """Copies the entire contents of the selected log row to the clipboard."""
+        selected_item = self.log_tree.selection()
+        if not selected_item:
+            return
+            
+        item = self.log_tree.item(selected_item[0])
+        if item and item['values'] and len(item['values']) > 2:
+            # ('  HH:MM:SS', '  LEVEL', '  Message')
+            time_val = item['values'][0].strip()
+            level_val = item['values'][1].strip()
+            msg_val = item['values'][2].strip()
+            
+            row_text = f"[{time_val}] [{level_val}] {msg_val}"
+            self.clipboard_clear()
+            self.clipboard_append(row_text)
 
     def show_page(self, page_to_show):
         """Raises the specified frame and manages footer button visibility."""

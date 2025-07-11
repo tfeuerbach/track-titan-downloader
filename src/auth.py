@@ -4,20 +4,20 @@ Handles Selenium-based browser authentication for TrackTitan.
 
 import logging
 import time
+import os
+from pathlib import Path
+import threading
 from typing import Optional
+
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-import os
-from pathlib import Path
-from selenium.common.exceptions import TimeoutException
-from . import constants
-import threading
+from selenium.common.exceptions import TimeoutException, WebDriverException
 
-logger = logging.getLogger(__name__)
+from . import constants
 
 class TrackTitanAuth:
     """Manages the Selenium browser session for TrackTitan login."""
@@ -30,255 +30,149 @@ class TrackTitanAuth:
         self.headless = headless
         self.download_path = download_path
         self.driver: Optional[webdriver.Chrome] = None
+        self.chrome_options: Options = self._configure_chrome_options()
     
-    def _get_chrome_options(self, is_manual_login: bool = False) -> Options:
-        """Configures and returns Chrome options with download preferences."""
+    def _configure_chrome_options(self) -> Options:
+        """Configures and returns Chrome options for Selenium."""
         chrome_options = Options()
 
         # Suppress console logs from Chrome/ChromeDriver
         chrome_options.add_argument('--log-level=3')
-        chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
-
+        # This combination is most effective at suppressing unwanted messages
+        chrome_options.add_experimental_option('excludeSwitches', ['enable-logging', 'enable-automation'])
+        
         # General browser settings
-        if self.headless and not is_manual_login:
-            chrome_options.add_argument('--headless')
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
         chrome_options.add_argument('--disable-gpu')
-        chrome_options.add_argument('--window-size=1280,960' if is_manual_login else '1920,1080')
-        chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
-
-        if not is_manual_login:
-            chrome_options.add_argument('--disable-web-security')
-            chrome_options.add_argument('--allow-running-insecure-content')
-            chrome_options.add_argument('--disable-features=VizDisplayCompositor')
+        chrome_options.add_argument('--window-size=1920,1080')
+        user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        chrome_options.add_argument(f"user-agent={user_agent}")
 
         # Configure download path
         download_dir_str = self.download_path or os.getenv('DOWNLOAD_PATH')
-        default_download_dir = Path('~/Documents/iRacing/setups').expanduser()
+        # Fallback to a sensible default if no path is provided
+        default_download_dir = Path.home() / "Documents" / "iRacing" / "setups"
 
-        if not download_dir_str:
-            if not is_manual_login:
-                logger.warning(f"DOWNLOAD_PATH environment variable not set. Defaulting to {default_download_dir}.")
-            download_path = default_download_dir
-        else:
-            download_path = Path(download_dir_str).expanduser().resolve()
+        download_path = Path(download_dir_str) if download_dir_str else default_download_dir
 
         try:
             download_path.mkdir(parents=True, exist_ok=True)
-        except PermissionError:
-            logger.error(f"Permission denied for download directory: {download_path}. Falling back to {default_download_dir}")
+        except Exception as e:
+            logging.warning(f"Could not create specified download directory '{download_path}': {e}. Defaulting to '{default_download_dir}'")
             download_path = default_download_dir
             download_path.mkdir(parents=True, exist_ok=True)
 
-        logger.info(f"Setting browser download directory to: {download_path}")
-
+        logging.info(f"Setting browser download directory to: {download_path}")
         prefs = {
-            "download.default_directory": str(download_path),
+            "download.default_directory": str(download_path.resolve()),
             "download.prompt_for_download": False,
             "download.directory_upgrade": True,
-            "safebrowsing.enabled": True,
-            "plugins.always_open_pdf_externally": True,
-            "profile.default_content_setting_values.automatic_downloads": 1,
+            "safebrowsing.enabled": True
         }
         chrome_options.add_experimental_option("prefs", prefs)
         return chrome_options
 
-    def authenticate(self) -> Optional[webdriver.Chrome]:
-        """Performs authentication and returns the webdriver instance."""
-        return self._authenticate_with_selenium()
-    
-    def _authenticate_with_selenium(self) -> Optional[webdriver.Chrome]:
-        """Logs into TrackTitan using a Selenium WebDriver."""
-        logger.info("Attempting Selenium-based authentication...")
+    def _get_driver(self, use_headless: bool) -> Optional[webdriver.Chrome]:
+        """Initializes and returns a WebDriver instance with the correct settings."""
+        if use_headless and "--headless=new" not in self.chrome_options.arguments:
+             self.chrome_options.add_argument("--headless=new")
+        elif not use_headless and any("--headless" in arg for arg in self.chrome_options.arguments):
+             self.chrome_options.arguments = [arg for arg in self.chrome_options.arguments if not arg.startswith("--headless")]
         
         try:
-            chrome_options = self._get_chrome_options()
-            service = Service()
-            self.driver = webdriver.Chrome(service=service, options=chrome_options)
-            
-            self.driver.get(self.login_url)
-            
-            # Actively poll for 5 seconds to find and close any pop-up modals.
-            logger.info("Starting a 5-second polling period to close any pop-ups...")
-            end_time = time.time() + 5
-            popup_closed = False
-            while time.time() < end_time and not popup_closed:
-                try:
-                    # Precise XPath for the SVG button in a modal, plus general fallbacks.
-                    close_button_xpath = constants.AUTH_SELECTORS['popup_close_button']
+            # Service object to disable console logging from chromedriver.exe
+            service_args = ['--log-level=OFF']
+            service = Service(service_args=service_args)
+            driver = webdriver.Chrome(service=service, options=self.chrome_options)
+            return driver
+        except WebDriverException as e:
+            logging.error(f"Failed to initialize browser. Ensure Chrome is installed and chromedriver is accessible. Error: {e}")
+            return None
 
-                    # Use a short wait time within the loop
-                    close_buttons = WebDriverWait(self.driver, 0.5).until(
-                        EC.presence_of_all_elements_located((By.XPATH, close_button_xpath))
-                    )
-                    
-                    for button in reversed(close_buttons):
-                        if button.is_displayed() and button.is_enabled():
-                            logger.info(f"Found and clicked a pop-up button: '{button.text or 'SVG/Close Button'}'")
-                            self.driver.execute_script("arguments[0].click();", button)
-                            popup_closed = True
-                            time.sleep(1.5)
-                            break # Exit inner loop once one is closed
-                
-                except TimeoutException:
-                    pass # No button found, continue polling.
-                except Exception as e:
-                    logger.warning(f"Error while trying to close pop-ups during polling: {e}")
-                
-                if not popup_closed:
-                    time.sleep(0.5)
-            
-            if not popup_closed:
-                logger.info("Polling period finished. No pop-ups were found or closed.")
-            
+    def init_browser_for_manual_login(self):
+        """Initializes a visible browser instance for the user to log in manually."""
+        logging.info("Initializing browser for manual login...")
+        self.driver = self._get_driver(use_headless=False)
+        if self.driver:
+            self.driver.get(self.login_url)
+        return self.driver
+    
+    def authenticate(self) -> Optional[webdriver.Chrome]:
+        """Initializes WebDriver, logs in automatically, and returns the authenticated driver."""
+        logging.info("Initializing browser for automatic login...")
+        self.driver = self._get_driver(use_headless=self.headless)
+        if not self.driver:
+            return None
+
+        self.driver.get(self.login_url)
+        return self._perform_login_flow()
+
+    def _perform_login_flow(self) -> Optional[webdriver.Chrome]:
+        """Handles the actual login steps after the browser is initialized."""
+        if not self.driver:
+            return None
+        try:
             wait = WebDriverWait(self.driver, 10)
             
-            email_selectors = constants.AUTH_SELECTORS['email_fields']
-            email_field = None
-            for selector in email_selectors:
-                try:
-                    email_field = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
-                    break
-                except:
-                    continue
-            
-            if not email_field:
-                raise Exception("Could not find email field")
-            
+            # --- Email Field ---
+            email_field = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='email']")))
             email_field.clear()
             email_field.send_keys(self.email)
             
-            password_selectors = constants.AUTH_SELECTORS['password_fields']
-            password_field = None
-            for selector in password_selectors:
-                try:
-                    password_field = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
-                    break
-                except:
-                    continue
-            
-            if not password_field:
-                raise Exception("Could not find password field")
-            
+            # --- Password Field ---
+            password_field = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password']")))
             password_field.clear()
             password_field.send_keys(self.password)
             
-            login_button = None
-            
-            # Prioritize more specific, reliable selectors first.
-            login_selectors = constants.AUTH_SELECTORS['login_buttons']
-            
-            for selector_type, selectors in login_selectors.items():
-                for selector in selectors:
-                    try:
-                        if selector_type == 'css':
-                            login_button = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, selector)))
-                        else: # xpath
-                            login_button = wait.until(EC.element_to_be_clickable((By.XPATH, selector)))
-                        
-                        if login_button:
-                            break
-                    except TimeoutException:
-                        continue
-                if login_button:
-                    break
-            
-            if not login_button:
-                # Fallback: find the first visible button on the page if specific ones fail
-                try:
-                    buttons = self.driver.find_elements(By.TAG_NAME, 'button')
-                    for btn in buttons:
-                        if btn.is_displayed():
-                            login_button = btn
-                            logger.warning(f"Could not find a specific login button, falling back to first visible button: {btn.text}")
-                            break
-                except Exception:
-                    pass # Fallback failed, the final check will handle it.
-
-            if not login_button:
-                raise Exception("Could not find or click the login button after all attempts.")
-            
+            # --- Login Button ---
+            login_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Log in')]")))
             login_button.click()
             
-            # Wait for redirect
-            time.sleep(3)
-            
-            if self._is_authenticated_selenium():
-                logger.info("Selenium-based authentication successful!")
-                return self.driver
-            else:
-                logger.error("Selenium-based authentication failed!")
-                return None
-                
-        except Exception as e:
-            logger.error(f"Selenium-based authentication failed: {e}")
-            if self.driver:
-                self.driver.quit()
-            return None
-    
-    def _is_authenticated_selenium(self) -> bool:
-        """Verifies authentication status by checking for common dashboard elements."""
-        if not self.driver:
-            return False
-        try:
-            page_source = self.driver.page_source.lower()
-            auth_indicators = [
-                'dashboard',
-                'logout',
-                'profile',
-                'account',
-                'welcome'
-            ]
-            
-            return any(indicator in page_source for indicator in auth_indicators)
-        except:
-            return False
-    
-    def close(self):
-        """Closes the Selenium WebDriver session."""
-        if self.driver:
-            self.driver.quit()
-
-    def init_browser_for_manual_login(self) -> Optional[webdriver.Chrome]:
-        """Initializes and returns a visible webdriver instance for manual login."""
-        logger.info("Initializing browser for manual login...")
-        try:
-            chrome_options = self._get_chrome_options(is_manual_login=True)
-            service = Service()
-            self.driver = webdriver.Chrome(service=service, options=chrome_options)
-            
-            self.driver.get(self.login_url)
+            # Wait for redirect and check for dashboard element
+            WebDriverWait(self.driver, 15).until(
+                EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'Dashboard')] | //*[contains(text(), 'dashboard')]"))
+            )
+            logging.info("Authentication successful!")
             return self.driver
+                
+        except TimeoutException:
+            logging.error("Authentication failed. A login element was not found or the page timed out.")
+            self.close()
+            return None
         except Exception as e:
-            logger.error(f"Failed to initialize browser: {e}", exc_info=True)
-            if self.driver:
-                self.driver.quit()
+            logging.error(f"An unexpected error occurred during login: {e}")
+            self.close()
             return None
 
     def wait_for_successful_login(self, success_url_part: str, stop_event: threading.Event) -> bool:
         """Waits for the user to complete login, checking for a URL change."""
-        logger.info("Waiting for user to complete manual login in the browser...")
+        if not self.driver:
+            return False
+        logging.info("Waiting for user to complete manual login in the browser...")
         wait_time_seconds = 120  # 2 minutes
         start_time = time.time()
         
         while time.time() - start_time < wait_time_seconds:
-            # --- Stop Event Check ---
-            if stop_event and stop_event.is_set():
-                logger.warning("Stop event received while waiting for manual login. Aborting.")
+            if stop_event.is_set():
+                logging.warning("Stop event received while waiting for manual login. Aborting.")
                 return False
-
             try:
-                current_url = self.driver.current_url
-                if success_url_part in current_url:
-                    logger.info("Successful login detected by URL change.")
-                    time.sleep(2) # Allow page to fully load after redirect
+                if success_url_part in self.driver.current_url:
+                    logging.info("Successful login detected by URL change.")
+                    time.sleep(2) # Allow page to fully load
                     return True
-            except Exception as e:
-                logger.warning(f"Could not get current URL, browser might be closed. {e}")
+            except WebDriverException:
+                logging.warning("Browser window was closed by the user.")
                 return False
             
             time.sleep(1) # Poll every second
         
-        logger.error("Timed out waiting for successful login.")
+        logging.error("Timed out waiting for successful login.")
         return False
+
+    def close(self):
+        """Closes the Selenium WebDriver session if it exists."""
+        if self.driver:
+            self.driver.quit()
+            self.driver = None
