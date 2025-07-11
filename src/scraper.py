@@ -28,7 +28,7 @@ class StopRequested(Exception):
 
 class SetupInfo:
     """A data container for a single setup's metadata."""
-    def __init__(self, name: str, track: str, car: str, download_url: str, 
+    def __init__(self, name: str, track: str, car: str, download_url: str,
                  author: str = "", description: str = "", rating: float = 0.0):
         self.name = name
         self.track = track
@@ -37,15 +37,15 @@ class SetupInfo:
         self.author = author
         self.description = description
         self.rating = rating
-    
+
     def __repr__(self):
         return f"SetupInfo(name='{self.name}', track='{self.track}', car='{self.car}')"
 
 class SetupScraper:
     """Handles scraping and downloading of setups from TrackTitan."""
-    
-    def __init__(self, session: webdriver.Chrome, 
-                 setup_page: str, delay: float = 1.0, 
+
+    def __init__(self, session: webdriver.Chrome,
+                 setup_page: str, delay: float = 1.0,
                  download_path: Optional[str] = None,
                  progress_queue: Optional[Queue] = None,
                  stop_event: Optional[threading.Event] = None,
@@ -59,7 +59,7 @@ class SetupScraper:
         self.stop_event = stop_event
         self.skip_event = skip_event
         self.garage61_folder = garage61_folder
-    
+
     def _interruptible_sleep(self, duration: float):
         """
         Sleeps for a given duration in small increments, checking for the stop
@@ -84,12 +84,12 @@ class SetupScraper:
             if max_val is not None:
                 update['max'] = max_val
             self.progress_queue.put(update)
-    
+
     def get_setup_listings(self) -> List[SetupInfo]:
         """Finds and downloads all available setups."""
         logger.info("Scraping and downloading setup listings with Selenium...")
         return self._scrape_with_selenium()
-    
+
     def _scrape_with_selenium(self) -> List[SetupInfo]:
         """Uses Selenium to scrape setup data from the 'Active' weekly section."""
         logger.info("Scraping with Selenium...")
@@ -113,7 +113,7 @@ class SetupScraper:
             # Scroll until an '(Inactive)' section header is visible, or we reach the page bottom.
             logger.info("Scrolling to load all setups...")
             last_height = self.session.execute_script("return document.body.scrollHeight")
-            
+
             # Track inactive section headers
             first_inactive_seen = False
             inactive_header_xpath = constants.SCRAPER_SELECTORS['inactive_section_header']
@@ -124,7 +124,7 @@ class SetupScraper:
             while True:
                 self.session.execute_script("window.scrollTo(0, document.body.scrollHeight);")
                 self._interruptible_sleep(self.delay + 2)
-                
+
                 # Current inactive headers on the page
                 inactive_headers = self.session.find_elements(By.XPATH, inactive_header_xpath)
 
@@ -156,13 +156,13 @@ class SetupScraper:
                     # Keep original count to detect cumulative extras.
 
                 # If no inactive headers yet or decided to continue, fall through to the height check.
-                
+
 
                 new_height = self.session.execute_script("return document.body.scrollHeight")
                 if new_height == last_height:
                     break
                 last_height = new_height
-            
+
             logger.info("Finished scrolling.")
 
             setups = self._extract_and_process_setups()
@@ -188,13 +188,13 @@ class SetupScraper:
         Extracts setup URLs from the current page, then downloads and processes each one.
         """
         setup_page_urls = self._extract_setup_urls_from_page()
-        
+
         if not setup_page_urls:
             logger.warning("No setup links found within any 'Active' sections.")
             return []
-    
+
         logger.info(f"Found a total of {len(setup_page_urls)} setup links across all 'Active' sections.")
-        
+
         setups = []
         failed_downloads = []
         total_setups = len(setup_page_urls)
@@ -204,20 +204,20 @@ class SetupScraper:
             if self.stop_event and self.stop_event.is_set():
                 logger.info("Stop event received, halting setup downloads.")
                 break
-            
+
             if self.skip_event:
                 self.skip_event.clear() # Reset for the current item.
 
             if not url:
                 self._report_progress(value=i + 1)
                 continue
-            
+
             setup_info = self._download_and_organize_one_setup(url)
             if setup_info:
                 setups.append(setup_info)
             else:
                 failed_downloads.append(url)
-            
+
             self._report_progress(value=i + 1)
             time.sleep(self.delay)
 
@@ -237,15 +237,15 @@ class SetupScraper:
         try:
             active_spans = self.session.find_elements(By.CSS_SELECTOR, constants.SCRAPER_SELECTORS['active_section_span'])
             if not active_spans:
-                    logger.warning("No '(Active)' sections found on the page.")
-                    return []
-            
+                logger.warning("No '(Active)' sections found on the page.")
+                return []
+
             logger.info(f"Found {len(active_spans)} '(Active)' sections. Collecting links from each.")
 
             for active_span in active_spans:
                 # Navigate from the '(Active)' span to the div containing the setup cards.
                 header_div = active_span.find_element(By.XPATH, "ancestor::div[1]")
-                
+
                 # Check the header text to exclude specific paid sections.
                 header_text = header_div.text
                 if constants.SCRAPER_SELECTORS['paid_bundle_section_text'] in header_text:
@@ -253,30 +253,34 @@ class SetupScraper:
                     continue
 
                 active_container = header_div.find_element(By.XPATH, "./following-sibling::div")
-                
+
                 # Find setup links only within that active container.
                 setup_links = active_container.find_elements(By.TAG_NAME, 'a')
-                
+
                 for link in setup_links:
                     url = link.get_attribute('href')
                     if url:
                         setup_page_urls.append(url)
 
         except Exception as e:
-            page_source = self.session.page_source
-            with open('debug_selenium_page.html', 'w', encoding='utf-8') as f:
-                f.write(page_source)
+            try:
+                page_source = self.session.page_source
+                with open('debug_selenium_page.html', 'w', encoding='utf-8') as f:
+                    f.write(page_source)
+            except Exception as save_e:
+                logger.error(f"Could not save debug page source: {save_e}")
             logger.error(f"Could not find or process the '(Active)' sections after scrolling. Error: {e}. Saved page HTML for debugging.")
             return []
-        
+
         return setup_page_urls
-    
+
     def _download_and_organize_one_setup(self, setup_page_url: str) -> Optional[SetupInfo]:
         """
         Directly downloads a setup .zip file from its download link,
         unpacks it, and organizes the files. This is more robust and
         allows for cancellation.
         """
+        tmp_zip_path = None
         try:
             # Re-use the authenticated session from Selenium to make the request
             cookies = self.session.get_cookies()
@@ -286,19 +290,19 @@ class SetupScraper:
 
             # The actual download link is predictable
             download_url = setup_page_url.replace('/setups/', '/setups/download/')
-            
+
             with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp_zip:
                 tmp_zip_path = Path(tmp_zip.name)
 
             logger.info(f"Downloading from: {download_url}")
-            
+
             try:
                 # Use a try/finally to ensure the temp file is cleaned up on error/stop
                 with s.get(download_url, stream=True, timeout=30) as r:
                     r.raise_for_status()
                     total_size = int(r.headers.get('content-length', 0))
                     chunk_size = 8192
-                    
+
                     with open(tmp_zip_path, 'wb') as f:
                         for chunk in r.iter_content(chunk_size=chunk_size):
                             # --- Stop Event Check ---
@@ -307,7 +311,7 @@ class SetupScraper:
                                 # The finally block will handle cleanup
                                 return None
                             f.write(chunk)
-                
+
                 logger.info(f"Finished downloading to {tmp_zip_path}")
                 return self._organize_setup_files(tmp_zip_path, setup_page_url)
 
@@ -315,7 +319,7 @@ class SetupScraper:
                 # If a stop was requested, or if any error occurred, the organized
                 # setup info will not have been returned. In that case, we must
                 # clean up the partially downloaded file.
-                if tmp_zip_path.exists():
+                if tmp_zip_path and tmp_zip_path.exists():
                     logger.debug(f"Cleaning up temporary file: {tmp_zip_path}")
                     tmp_zip_path.unlink()
 
@@ -361,14 +365,14 @@ class SetupScraper:
                 temp_path = Path(temp_dir)
                 with zipfile.ZipFile(zip_file, 'r') as zip_ref:
                     zip_ref.extractall(temp_path)
-                
+
                 sto_files = list(temp_path.rglob('*.sto'))
                 if not sto_files:
                      raise Exception(f"No .sto setup files found in the zip: {zip_file.name}")
 
                 first_sto_file = sto_files[0]
                 relative_sto_path = first_sto_file.relative_to(temp_path)
-                
+
                 if len(relative_sto_path.parts) < 3:
                     potential_car_dirs = [d for d in temp_path.rglob('*') if d.is_dir() and any(sd.is_dir() for sd in d.iterdir())]
                     if not potential_car_dirs:
@@ -378,7 +382,7 @@ class SetupScraper:
 
                 car_name_raw = relative_sto_path.parts[0]
                 track_name_raw = relative_sto_path.parts[1]
-                
+
                 setup_source_dir = temp_path / relative_sto_path.parent
                 race_setup = next((s for s in sto_files if '_sR' in s.name), sto_files[0])
                 setup_package_name = race_setup.stem
@@ -399,7 +403,7 @@ class SetupScraper:
 
                 for item in setup_source_dir.iterdir():
                     shutil.move(str(item), str(final_dir))
-            
+
             car_name_display = car_name_raw.replace('-', ' ')
             track_name_display = track_name_raw.replace('-', ' ')
             name = f"{car_name_display} - {track_name_display}"
