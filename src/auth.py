@@ -40,7 +40,7 @@ class TrackTitanAuth:
         chrome_options.add_argument('--log-level=3')
         # This combination is most effective at suppressing unwanted messages
         chrome_options.add_experimental_option('excludeSwitches', ['enable-logging', 'enable-automation'])
-        
+
         # General browser settings
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
@@ -144,7 +144,7 @@ class TrackTitanAuth:
             logging.error(f"An unexpected error occurred during login: {e}")
             self.close()
             return None
-
+    
     def wait_for_successful_login(self, success_url_part: str, stop_event: threading.Event) -> bool:
         """Waits for the user to complete login, checking for a URL change."""
         if not self.driver:
@@ -170,7 +170,7 @@ class TrackTitanAuth:
         
         logging.error("Timed out waiting for successful login.")
         return False
-
+    
     def close(self):
         """Closes the Selenium WebDriver session if it exists."""
         if self.driver:

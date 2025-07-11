@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Track Titan Downloader</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Roboto', 'Helvetica Neue', sans-serif;
+      background: #212123;
+      color: #e0e0e0;
+      scroll-behavior: smooth;
+    }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 0 20px;
+    }
+
+    /* --- Hero Section --- */
+    #hero {
+      min-height: 85vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      padding: 40px 20px;
+    }
+
+    .logo {
+      width: 90px;
+      margin-bottom: 20px;
+      border-radius: 16px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+    }
+
+    h1 {
+      font-size: 3.5em;
+      font-weight: 700;
+      margin: 20px 0 10px;
+      color: #ffffff;
+    }
+
+    #hero p {
+      font-size: 1.2em;
+      max-width: 550px;
+      color: #a1a1a6;
+      line-height: 1.6;
+    }
+
+    /* --- Buttons --- */
+    .buttons {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 20px;
+      margin: 40px 0;
+    }
+
+    .buttons a {
+      background: #0A84FF;
+      color: #fff;
+      text-decoration: none;
+      padding: 14px 32px;
+      border-radius: 50px;
+      font-size: 1rem;
+      font-weight: 600;
+      box-shadow: 0 4px 14px rgba(10, 132, 255, 0.25);
+      transition: all 0.3s ease-in-out;
+      position: relative;
+      overflow: hidden;
+    }
+    
+    .buttons a:hover {
+      background: #007BE0;
+      transform: translateY(-3px);
+      box-shadow: 0 6px 20px rgba(10, 132, 255, 0.35);
+    }
+    
+    .buttons a.secondary {
+        background: #3a3a3c;
+        color: #fff;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+    }
+    
+    .buttons a.secondary:hover {
+        background: #4a4a4c;
+        transform: translateY(-3px);
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+    }
+
+    /* --- Screenshot Section --- */
+    #screenshot-section {
+      padding: 20vh 0 25vh;
+      text-align: center;
+      opacity: 0;
+      transition: opacity 0.6s ease-out;
+    }
+
+    #screenshot-section.visible {
+      opacity: 1;
+    }
+
+    #screenshot-section img {
+      max-width: 100%;
+      width: 900px;
+      border-radius: 12px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.25);
+    }
+
+    /* --- Footer --- */
+    footer {
+      text-align: center;
+      padding: 40px 20px;
+      font-size: 0.9em;
+      color: #888;
+    }
+
+    footer a {
+      color: #a1a1a6;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    footer a:hover {
+        text-decoration: underline;
+    }
+
+    /* --- Ripple Effect --- */
+    .ripple {
+      position: absolute;
+      width: 100px;
+      height: 100px;
+      background: rgba(255, 255, 255, 0.3);
+      border-radius: 50%;
+      transform: scale(0);
+      animation: ripple-effect 0.6s linear;
+      pointer-events: none;
+    }
+
+    .buttons a.secondary .ripple {
+        background: rgba(255, 255, 255, 0.15);
+    }
+  
+    @keyframes ripple-effect {
+      to {
+        transform: scale(4);
+        opacity: 0;
+      }
+    }
+
+    @media (max-width: 768px) {
+      h1 { font-size: 2.5em; }
+      #hero p { font-size: 1.1em; }
+    }
+  </style>
+</head>
+<body>
+
+  <main>
+    <section id="hero">
+        <img class="logo" src="./assets/icon.ico" alt="Track Titan Downloader Logo" />
+        <h1>Track Titan Downloader</h1>
+        <p>The simplest way to download all weekly Track Titan setups at once. Get everything up front without needing to join a session for every single car.</p>
+
+        <div class="buttons">
+            <a href="https://github.com/tfeuerbach/track-titan-downloader/releases/latest" target="_blank">Download Latest</a>
+            <a href="https://github.com/tfeuerbach/track-titan-downloader" class="secondary" target="_blank">View on GitHub</a>
+        </div>
+    </section>
+
+    <div class="container">
+      <section id="screenshot-section">
+        <img src="https://via.placeholder.com/1200x800?text=App+Screenshot+Here" alt="Application Screenshot">
+      </section>
+    </div>
+  </main>
+  
+  <footer>
+      <div class="container">
+          <p>Made by <a href="https://www.tfeuerbach.dev" target="_blank">Thomas Feuerbach</a></p>
+      </div>
+  </footer>
+
+  <script>
+    // --- Ripple effect on button click ---
+    document.querySelectorAll('.buttons a').forEach(button => {
+      button.addEventListener('click', e => {
+        const existingRipple = button.querySelector('.ripple');
+        if(existingRipple) existingRipple.remove();
+
+        const ripple = document.createElement('span');
+        const rect = button.getBoundingClientRect();
+        ripple.style.left = `${e.clientX - rect.left}px`;
+        ripple.style.top = `${e.clientY - rect.top}px`;
+        ripple.classList.add('ripple');
+        button.appendChild(ripple);
+
+        setTimeout(() => {
+          if(ripple) ripple.remove();
+        }, 600);
+      });
+    });
+
+    // --- Screenshot fade-in effect ---
+    const screenshotSection = document.querySelector('#screenshot-section');
+    if (screenshotSection) {
+        const observer = new IntersectionObserver(entries => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    screenshotSection.classList.add('visible');
+                    observer.unobserve(screenshotSection);
+                }
+            });
+        }, { threshold: 0.1 }); 
+
+        observer.observe(screenshotSection);
+    }
+  </script>
+
+</body>
+</html> 
